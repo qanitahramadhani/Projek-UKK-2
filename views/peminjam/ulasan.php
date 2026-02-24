@@ -25,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($rating < 1 || $rating > 5) { $msg = 'Pilih rating bintang terlebih dahulu (1–5).'; $msgType = 'danger'; }
         elseif (strlen($ulasan) < 5)    { $msg = 'Ulasan terlalu singkat, minimal 5 karakter.'; $msgType = 'danger'; }
         else {
+            // HARUS pernah meminjam untuk bisa memberikan ulasan
             $pernah = $conn->query("SELECT PeminjamanID FROM peminjaman WHERE UserID=$uid AND BukuID=$BukuID LIMIT 1")->num_rows;
             if ($pernah === 0) { $msg = 'Anda hanya bisa memberi ulasan pada buku yang pernah Anda pinjam.'; $msgType = 'warning'; }
             else {
@@ -51,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// ── Tab mode: 'semua' (jelajah semua buku) atau 'saya' (buku yg pernah dipinjam) ──
+// ── Tab & Filter ──
 $tab        = $_GET['tab']  ?? 'semua';
 $bukuFilter = intval($_GET['buku'] ?? 0);
 $searchQ    = trim($_GET['q'] ?? '');
@@ -62,10 +63,11 @@ $bukuDipinjam = $conn->query("
     FROM peminjaman p JOIN buku b ON p.BukuID=b.BukuID
     WHERE p.UserID=$uid ORDER BY b.Judul
 ");
-$bukuList = [];
+$bukuList = array();
 if ($bukuDipinjam) while ($b = $bukuDipinjam->fetch_assoc()) $bukuList[] = $b;
+$bukuPinjamIDs = array_column($bukuList, 'BukuID');
 
-// Semua buku (untuk tab Jelajah)
+// Semua buku — BISA DILIHAT SIAPA SAJA (tidak perlu meminjam)
 $searchWhere = '';
 if ($searchQ) {
     $sq = $conn->real_escape_string($searchQ);
@@ -80,7 +82,7 @@ $semuaBuku = $conn->query("
     $searchWhere
     GROUP BY b.BukuID
     ORDER BY JmlUlasan DESC, b.Judul ASC
-    LIMIT 50
+    LIMIT 60
 ");
 
 // Ulasan saya
@@ -92,7 +94,7 @@ $myUlasan = $conn->query("
     ORDER BY u.CreatedAt DESC
 ");
 if (!$myUlasan) die("DB Error: " . $conn->error);
-$myRows = [];
+$myRows = array();
 while ($r = $myUlasan->fetch_assoc()) $myRows[] = $r;
 
 // Detail buku yang dipilih
@@ -121,6 +123,7 @@ if ($bukuFilter > 0) {
     $res = $conn->query("SELECT * FROM ulasanbuku WHERE UserID=$uid AND BukuID=$bukuFilter");
     if ($res && $res->num_rows > 0) $ulasanSayaUntukBuku = $res->fetch_assoc();
 
+    // Cek apakah user pernah meminjam buku ini
     $pernah = $conn->query("SELECT PeminjamanID FROM peminjaman WHERE UserID=$uid AND BukuID=$bukuFilter LIMIT 1");
     $sudahPernah = ($pernah && $pernah->num_rows > 0);
 }
@@ -142,8 +145,8 @@ $activePage = 'ulasan';
 
 /* ── Tab ── */
 .tab-bar{display:flex;gap:4px;margin-bottom:22px;background:#f3f4f6;border-radius:12px;padding:5px;}
-.tab-btn{flex:1;padding:10px 16px;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;color:#6b7280;background:transparent;}
-.tab-btn.active{background:#fff;color:#1e1e2f;box-shadow:0 2px 8px rgba(0,0,0,.1);}
+.tab-btn-ul{flex:1;padding:10px 16px;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;color:#6b7280;background:transparent;}
+.tab-btn-ul.active{background:#fff;color:#1e1e2f;box-shadow:0 2px 8px rgba(0,0,0,.1);}
 
 /* ── Layout ── */
 .ulasan-layout{display:grid;grid-template-columns:290px 1fr;gap:22px;align-items:start;}
@@ -154,16 +157,18 @@ $activePage = 'ulasan';
 .buku-picker-head{background:linear-gradient(135deg,#1e1e2f,#3a3a5c);padding:14px 16px;color:#fff;}
 .buku-picker-head h3{font-family:'Playfair Display',serif;font-size:15px;margin:0 0 2px;}
 .buku-picker-head p{font-size:11px;color:rgba(255,255,255,.55);margin:0;}
-.buku-picker-head .search-mini{margin-top:10px;display:flex;gap:6px;}
+.search-mini{margin-top:10px;display:flex;gap:6px;}
 .search-mini input{flex:1;padding:7px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-family:'DM Sans',sans-serif;font-size:12px;}
 .search-mini input::placeholder{color:rgba(255,255,255,.45);}
 .search-mini input:focus{outline:none;border-color:rgba(255,255,255,.5);}
 .search-mini button{padding:7px 12px;border-radius:8px;border:none;background:rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;}
-.buku-picker-list{padding:8px;max-height:460px;overflow-y:auto;}
+.buku-picker-list{padding:8px;max-height:500px;overflow-y:auto;}
 
 .buku-picker-item{display:flex;align-items:center;gap:10px;padding:9px;border-radius:10px;cursor:pointer;transition:background .18s;text-decoration:none;border:1.5px solid transparent;margin-bottom:3px;}
 .buku-picker-item:hover{background:#f5f5ff;border-color:#d1d1f0;}
 .buku-picker-item.active{background:#ede9fe;border-color:#7c3aed;}
+.buku-picker-item.pernah-pinjam{position:relative;}
+.pernah-badge{font-size:9px;font-weight:700;color:#16a34a;background:#dcfce7;border-radius:4px;padding:1px 5px;margin-top:2px;display:inline-block;}
 
 .picker-cover-wrap{flex-shrink:0;width:40px;height:55px;border-radius:5px;overflow:hidden;background:linear-gradient(135deg,#1e1e2f,#3a3a5c);display:flex;align-items:center;justify-content:center;}
 .picker-cover-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -173,25 +178,24 @@ $activePage = 'ulasan';
 .buku-picker-info h4{font-size:12.5px;font-weight:600;color:#1e1e2f;margin:0 0 2px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .buku-picker-info p{font-size:11px;color:#6b7280;margin:0;}
 .picker-rating{display:flex;align-items:center;gap:3px;margin-top:3px;}
-.picker-rating .stars{font-size:10px;}
 .picker-rating .val{font-size:11px;font-weight:700;color:#f59e0b;}
 .picker-rating .cnt{font-size:10px;color:#9ca3af;}
 
 /* ── Book Header Banner ── */
 .book-header-banner{position:relative;height:155px;background:linear-gradient(135deg,#1e1e2f,#3a3a5c);overflow:hidden;}
-.book-header-banner .bhb-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(10px) brightness(.4);transform:scale(1.1);}
-.book-header-banner .bhb-content{position:relative;z-index:1;height:100%;display:flex;align-items:flex-end;padding:14px 18px;gap:14px;}
-.book-header-banner .bhb-img{width:70px;height:98px;object-fit:cover;border-radius:7px;border:3px solid rgba(255,255,255,.3);box-shadow:0 4px 14px rgba(0,0,0,.4);flex-shrink:0;}
-.book-header-banner .bhb-empty{width:70px;height:98px;border-radius:7px;border:2px dashed rgba(255,255,255,.25);background:rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;}
-.book-header-banner .bhb-text{flex:1;color:#fff;}
-.book-header-banner .bhb-text h3{font-family:'Playfair Display',serif;font-size:17px;margin:0 0 3px;line-height:1.3;}
-.book-header-banner .bhb-text p{font-size:11.5px;color:rgba(255,255,255,.65);margin:0 0 7px;}
+.bhb-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(10px) brightness(.4);transform:scale(1.1);}
+.bhb-content{position:relative;z-index:1;height:100%;display:flex;align-items:flex-end;padding:14px 18px;gap:14px;}
+.bhb-img{width:70px;height:98px;object-fit:cover;border-radius:7px;border:3px solid rgba(255,255,255,.3);box-shadow:0 4px 14px rgba(0,0,0,.4);flex-shrink:0;}
+.bhb-empty{width:70px;height:98px;border-radius:7px;border:2px dashed rgba(255,255,255,.25);background:rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;}
+.bhb-text{flex:1;color:#fff;}
+.bhb-text h3{font-family:'Playfair Display',serif;font-size:17px;margin:0 0 3px;line-height:1.3;}
+.bhb-text p{font-size:11.5px;color:rgba(255,255,255,.65);margin:0 0 7px;}
 .rating-summary-inline{display:flex;align-items:center;gap:7px;}
 .rating-big-inline{font-size:20px;font-weight:700;font-family:'Playfair Display',serif;color:#fff;}
 .stars-inline span{font-size:14px;}
 .rating-count-inline{font-size:11px;color:rgba(255,255,255,.6);}
 
-/* ── Form ── */
+/* ── Form Ulasan ── */
 .form-card{background:#fff;border-radius:14px;border:1px solid var(--border);overflow:hidden;margin-bottom:18px;}
 .form-card-body{padding:18px 20px 22px;}
 .star-input-wrap{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:3px;margin-bottom:4px;}
@@ -206,7 +210,8 @@ $activePage = 'ulasan';
 .btn-submit-ulasan{padding:11px 24px;background:linear-gradient(135deg,#1e1e2f,#3a3a5c);color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s;}
 .btn-submit-ulasan:hover{opacity:.88;}
 
-/* Notice: buku belum pernah dipinjam */
+/* Notice: belum pernah pinjam (hanya bisa lihat) */
+.notice-view-only{background:#eff6ff;border:1.5px solid #93c5fd;border-radius:10px;padding:13px 15px;font-size:13px;color:#1e40af;margin-bottom:16px;display:flex;gap:8px;align-items:flex-start;}
 .notice-pinjam{background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;padding:13px 15px;font-size:13px;color:#92400e;margin-bottom:16px;display:flex;gap:8px;align-items:flex-start;}
 
 /* ── Review Cards ── */
@@ -224,7 +229,20 @@ $activePage = 'ulasan';
 .review-text{font-size:13.5px;color:#374151;line-height:1.6;}
 .mine-badge{font-size:10px;font-weight:700;color:#7c3aed;background:#ede9fe;padding:2px 7px;border-radius:20px;}
 
-/* ── My Reviews Mini ── */
+/* Rating summary box */
+.rating-summary-box{background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:12px;padding:16px;margin-bottom:16px;display:flex;gap:16px;align-items:center;}
+.rsb-big{font-size:40px;font-weight:700;color:#d97706;font-family:'Playfair Display',serif;line-height:1;flex-shrink:0;}
+.rsb-right{flex:1;}
+.rsb-stars{font-size:18px;color:#f59e0b;margin-bottom:4px;}
+.rsb-sub{font-size:12px;color:#92400e;}
+.rsb-bars{margin-top:8px;}
+.rsb-bar-row{display:flex;align-items:center;gap:7px;margin-bottom:4px;}
+.rsb-bar-row .lbl{font-size:10px;color:#6b7280;width:30px;text-align:right;}
+.rsb-bar-track{flex:1;height:6px;background:#f3f4f6;border-radius:3px;overflow:hidden;}
+.rsb-bar-fill{height:100%;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:3px;}
+.rsb-bar-cnt{font-size:10px;color:#9ca3af;width:18px;}
+
+/* My reviews mini */
 .my-review-mini{background:#fff;border-radius:12px;border:1px solid var(--border);margin-top:12px;overflow:hidden;}
 .my-review-mini-head{padding:11px 14px;border-bottom:1px solid var(--border);background:#fafafa;}
 .my-review-mini-head h4{font-size:13px;font-weight:700;color:#1e1e2f;margin:0;}
@@ -264,11 +282,11 @@ $activePage = 'ulasan';
 
     <!-- TAB BAR -->
     <div class="tab-bar">
-      <button class="tab-btn <?= $tab==='semua'?'active':'' ?>"
+      <button class="tab-btn-ul <?= $tab==='semua'?'active':'' ?>"
               onclick="location.href='?tab=semua<?= $bukuFilter?'&buku='.$bukuFilter:'' ?>'">
-        &#128218; Jelajah Semua Buku
+        &#128218; Semua Buku
       </button>
-      <button class="tab-btn <?= $tab==='saya'?'active':'' ?>"
+      <button class="tab-btn-ul <?= $tab==='saya'?'active':'' ?>"
               onclick="location.href='?tab=saya<?= $bukuFilter?'&buku='.$bukuFilter:'' ?>'">
         &#128221; Buku Saya (<?= count($bukuList) ?>)
       </button>
@@ -279,11 +297,10 @@ $activePage = 'ulasan';
       <!-- ── Kolom Kiri: Picker ── -->
       <div>
         <?php if ($tab === 'semua'): ?>
-        <!-- Picker semua buku dengan search -->
         <div class="buku-picker">
           <div class="buku-picker-head">
             <h3>&#128218; Semua Buku</h3>
-            <p>Pilih buku untuk melihat ulasan</p>
+            <p>Pilih buku untuk melihat ulasan. &#9989; = pernah Anda pinjam</p>
             <form method="GET" class="search-mini">
               <input type="hidden" name="tab" value="semua">
               <input type="text" name="q" placeholder="Cari judul / penulis..." value="<?= htmlspecialchars($searchQ) ?>">
@@ -293,10 +310,11 @@ $activePage = 'ulasan';
           <div class="buku-picker-list">
             <?php if ($semuaBuku && $semuaBuku->num_rows > 0):
               while ($sb = $semuaBuku->fetch_assoc()):
-                $sbCover = !empty($sb['CoverURL']) ? $coverBaseURL . $sb['CoverURL'] : '';
+                $sbCover    = !empty($sb['CoverURL']) ? $coverBaseURL . $sb['CoverURL'] : '';
+                $pernahPnjm = in_array($sb['BukuID'], $bukuPinjamIDs);
             ?>
             <a href="?tab=semua&buku=<?= $sb['BukuID'] ?><?= $searchQ?'&q='.urlencode($searchQ):'' ?>"
-               class="buku-picker-item <?= $bukuFilter===$sb['BukuID']?'active':'' ?>">
+               class="buku-picker-item <?= $bukuFilter===$sb['BukuID']?'active':'' ?> <?= $pernahPnjm?'pernah-pinjam':'' ?>">
               <div class="picker-cover-wrap">
                 <?php if ($sbCover): ?>
                   <img src="<?= htmlspecialchars($sbCover) ?>" alt=""
@@ -309,10 +327,13 @@ $activePage = 'ulasan';
               <div class="buku-picker-info">
                 <h4><?= htmlspecialchars($sb['Judul']) ?></h4>
                 <p><?= htmlspecialchars($sb['Penulis']?:'Anonim') ?></p>
+                <?php if ($pernahPnjm): ?>
+                  <span class="pernah-badge">✅ Pernah dipinjam</span>
+                <?php endif; ?>
                 <div class="picker-rating">
                   <?php if ($sb['JmlUlasan'] > 0): ?>
                     <span class="val"><?= $sb['RataRating'] ?></span>
-                    <span class="stars">&#11088;</span>
+                    <span>&#11088;</span>
                     <span class="cnt">(<?= $sb['JmlUlasan'] ?>)</span>
                   <?php else: ?>
                     <span class="cnt">Belum ada ulasan</span>
@@ -327,11 +348,10 @@ $activePage = 'ulasan';
         </div>
 
         <?php else: /* tab === 'saya' */ ?>
-        <!-- Picker buku yang pernah dipinjam -->
         <div class="buku-picker">
           <div class="buku-picker-head">
             <h3>&#128218; Buku Saya</h3>
-            <p>Buku yang pernah Anda pinjam</p>
+            <p>Buku yang pernah Anda pinjam — Anda bisa memberi ulasan</p>
           </div>
           <div class="buku-picker-list">
             <?php if (empty($bukuList)): ?>
@@ -353,6 +373,7 @@ $activePage = 'ulasan';
               <div class="buku-picker-info">
                 <h4><?= htmlspecialchars($bl['Judul']) ?></h4>
                 <p><?= htmlspecialchars($bl['Penulis']?:'Anonim') ?></p>
+                <span class="pernah-badge">✅ Bisa diulas</span>
               </div>
             </a>
             <?php endforeach; endif; ?>
@@ -429,73 +450,101 @@ $activePage = 'ulasan';
             </div>
 
             <div class="form-card-body">
-              <?php if ($sudahPernah || $tab === 'saya'): ?>
-                <!-- Form tulis/edit ulasan — hanya muncul jika pernah meminjam -->
-                <?php if (!$sudahPernah && $tab === 'saya'): ?>
-                  <!-- tab saya tapi belum pernah pinjam buku ini (edge case) -->
-                <?php else: ?>
-                  <?php if (!$sudahPernah): ?>
-                  <div class="notice-pinjam">
-                    &#128218; Anda belum pernah meminjam buku ini. Anda hanya dapat melihat ulasan dari pembaca lain.
+              <?php if ($sudahPernah): ?>
+                <!-- Pernah pinjam: bisa beri ulasan -->
+                <div style="font-weight:700;font-size:14px;color:#1e1e2f;margin-bottom:13px;">
+                  <?= $ulasanSayaUntukBuku ? '&#9999;&#65039; Edit Ulasan Anda' : '&#9997;&#65039; Tulis Ulasan' ?>
+                </div>
+                <form method="POST" id="formUlasan">
+                  <input type="hidden" name="action"  value="submit">
+                  <input type="hidden" name="buku_id" value="<?= $bukuFilter ?>">
+                  <div style="margin-bottom:5px;font-size:11px;font-weight:700;color:#1e1e2f;text-transform:uppercase;letter-spacing:.6px">&#11088; Beri Rating</div>
+                  <div class="star-input-wrap">
+                    <?php $existRating = $ulasanSayaUntukBuku['Rating'] ?? 0; ?>
+                    <?php for($s=5;$s>=1;$s--): ?>
+                      <input type="radio" name="rating" id="star<?= $s ?>" value="<?= $s ?>" <?= $existRating==$s?'checked':'' ?>>
+                      <label for="star<?= $s ?>" title="<?= $s ?> bintang">&#9733;</label>
+                    <?php endfor; ?>
                   </div>
-                  <?php else: ?>
-                  <div style="font-weight:700;font-size:14px;color:#1e1e2f;margin-bottom:13px;">
-                    <?= $ulasanSayaUntukBuku ? '&#9999;&#65039; Edit Ulasan Anda' : '&#9997;&#65039; Tulis Ulasan' ?>
+                  <div class="star-hint" id="starHint">
+                    <?php
+                      $hints = array('','&#128542; Mengecewakan','&#128528; Biasa','&#128578; Cukup Bagus','&#128522; Bagus','&#129321; Luar Biasa!');
+                      echo $existRating > 0 ? $hints[$existRating] : 'Klik bintang untuk memberi penilaian';
+                    ?>
                   </div>
-                  <form method="POST" id="formUlasan">
-                    <input type="hidden" name="action"  value="submit">
-                    <input type="hidden" name="buku_id" value="<?= $bukuFilter ?>">
-                    <div style="margin-bottom:5px;font-size:11px;font-weight:700;color:#1e1e2f;text-transform:uppercase;letter-spacing:.6px">&#11088; Beri Rating</div>
-                    <div class="star-input-wrap">
-                      <?php $existRating = $ulasanSayaUntukBuku['Rating'] ?? 0; ?>
-                      <?php for($s=5;$s>=1;$s--): ?>
-                        <input type="radio" name="rating" id="star<?= $s ?>" value="<?= $s ?>" <?= $existRating==$s?'checked':'' ?>>
-                        <label for="star<?= $s ?>" title="<?= $s ?> bintang">&#9733;</label>
-                      <?php endfor; ?>
-                    </div>
-                    <div class="star-hint" id="starHint">
-                      <?= $existRating > 0 ? ['','&#128542; Mengecewakan','&#128528; Biasa','&#128578; Cukup Bagus','&#128522; Bagus','&#129321; Luar Biasa!'][$existRating] : 'Klik bintang untuk memberi penilaian' ?>
-                    </div>
-                    <div style="margin-bottom:5px;font-size:11px;font-weight:700;color:#1e1e2f;text-transform:uppercase;letter-spacing:.6px">&#128221; Ulasan</div>
-                    <textarea name="ulasan" id="ulasanText" class="ulasan-textarea"
-                              placeholder="Ceritakan pengalaman Anda membaca buku ini..."
-                              maxlength="1000" required><?= htmlspecialchars($ulasanSayaUntukBuku['Ulasan'] ?? '') ?></textarea>
-                    <div class="char-count"><span id="charNow"><?= strlen($ulasanSayaUntukBuku['Ulasan'] ?? '') ?></span>/1000</div>
-                    <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
-                      <button type="submit" class="btn-submit-ulasan">
-                        <?= $ulasanSayaUntukBuku ? '&#128190; Perbarui Ulasan' : '&#128640; Kirim Ulasan' ?>
+                  <div style="margin-bottom:5px;font-size:11px;font-weight:700;color:#1e1e2f;text-transform:uppercase;letter-spacing:.6px">&#128221; Ulasan</div>
+                  <textarea name="ulasan" id="ulasanText" class="ulasan-textarea"
+                            placeholder="Ceritakan pengalaman Anda membaca buku ini..."
+                            maxlength="1000" required><?= htmlspecialchars($ulasanSayaUntukBuku['Ulasan'] ?? '') ?></textarea>
+                  <div class="char-count"><span id="charNow"><?= strlen($ulasanSayaUntukBuku['Ulasan'] ?? '') ?></span>/1000</div>
+                  <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+                    <button type="submit" class="btn-submit-ulasan">
+                      <?= $ulasanSayaUntukBuku ? '&#128190; Perbarui Ulasan' : '&#128640; Kirim Ulasan' ?>
+                    </button>
+                    <?php if ($ulasanSayaUntukBuku): ?>
+                    <form method="POST" style="display:inline" onsubmit="return confirm('Hapus ulasan ini?')">
+                      <input type="hidden" name="action"    value="hapus">
+                      <input type="hidden" name="buku_id"   value="<?= $bukuFilter ?>">
+                      <input type="hidden" name="ulasan_id" value="<?= $ulasanSayaUntukBuku['UlasanID'] ?>">
+                      <button type="submit" style="padding:11px 16px;border-radius:10px;border:1.5px solid #ef4444;background:#fff;color:#ef4444;font-family:'DM Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;">
+                        &#128465;&#65039; Hapus
                       </button>
-                      <?php if ($ulasanSayaUntukBuku): ?>
-                      <form method="POST" style="display:inline" onsubmit="return confirm('Hapus ulasan ini?')">
-                        <input type="hidden" name="action"    value="hapus">
-                        <input type="hidden" name="buku_id"   value="<?= $bukuFilter ?>">
-                        <input type="hidden" name="ulasan_id" value="<?= $ulasanSayaUntukBuku['UlasanID'] ?>">
-                        <button type="submit" style="padding:11px 16px;border-radius:10px;border:1.5px solid #ef4444;background:#fff;color:#ef4444;font-family:'DM Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;">
-                          &#128465;&#65039; Hapus
-                        </button>
-                      </form>
-                      <?php endif; ?>
-                    </div>
-                  </form>
-                  <?php endif; ?>
-                <?php endif; ?>
+                    </form>
+                    <?php endif; ?>
+                  </div>
+                </form>
+
               <?php else: ?>
-                <!-- Belum pernah pinjam — hanya lihat -->
-                <div class="notice-pinjam">
-                  &#128218; Anda belum pernah meminjam buku ini. Pinjam terlebih dahulu untuk bisa memberikan ulasan.
-                  <a href="../../views/peminjam/katalog.php" style="color:#92400e;font-weight:700;margin-left:6px;">Lihat Katalog &#8594;</a>
+                <!-- Belum pernah pinjam: hanya bisa lihat ulasan -->
+                <div class="notice-view-only">
+                  <span style="font-size:18px;flex-shrink:0">&#128218;</span>
+                  <span>
+                    Anda belum pernah meminjam buku ini, sehingga <strong>tidak bisa memberikan ulasan</strong>.
+                    Anda tetap bisa membaca ulasan dari pembaca lain di bawah.
+                    <a href="../../views/peminjam/katalog.php" style="color:#1e40af;font-weight:700;margin-left:4px;">Pinjam buku ini &#8594;</a>
+                  </span>
                 </div>
               <?php endif; ?>
             </div>
           </div>
 
-          <!-- Semua Ulasan Buku Ini -->
-          <?php if ($semuaUlasanBuku && $semuaUlasanBuku->num_rows > 0): ?>
+          <!-- Rating Summary Box (jika ada ulasan) -->
+          <?php if ($semuaUlasanBuku && $semuaUlasanBuku->num_rows > 0):
+            // Hitung distribusi
+            $semuaUlasanBuku->data_seek(0);
+            $allRevs = array();
+            while ($rv = $semuaUlasanBuku->fetch_assoc()) $allRevs[] = $rv;
+            $totalRevs = count($allRevs);
+            $sumRating = array_sum(array_column($allRevs, 'Rating'));
+            $avgRating = $totalRevs > 0 ? round($sumRating / $totalRevs, 1) : 0;
+            $dist = array(1=>0,2=>0,3=>0,4=>0,5=>0);
+            foreach ($allRevs as $rv2) $dist[$rv2['Rating']] = ($dist[$rv2['Rating']]??0)+1;
+          ?>
+          <div class="rating-summary-box">
+            <div class="rsb-big"><?= $avgRating ?: '—' ?></div>
+            <div class="rsb-right">
+              <div class="rsb-stars">
+                <?php for($s=1;$s<=5;$s++) echo $s<=$avgRating?'⭐':'☆'; ?>
+              </div>
+              <div class="rsb-sub"><?= $totalRevs ?> ulasan dari pembaca</div>
+              <div class="rsb-bars">
+                <?php for($b2=5;$b2>=1;$b2--): $pct2 = $totalRevs > 0 ? round($dist[$b2]/$totalRevs*100) : 0; ?>
+                <div class="rsb-bar-row">
+                  <div class="lbl"><?= $b2 ?> ★</div>
+                  <div class="rsb-bar-track"><div class="rsb-bar-fill" style="width:<?= $pct2 ?>%"></div></div>
+                  <div class="rsb-bar-cnt"><?= $dist[$b2] ?></div>
+                </div>
+                <?php endfor; ?>
+              </div>
+            </div>
+          </div>
+
+          <!-- Semua Ulasan -->
           <div class="review-section">
             <div style="font-family:'Playfair Display',serif;font-size:17px;color:#1e1e2f;margin-bottom:12px;font-weight:700;">
-              &#128172; Ulasan Pembaca (<?= $semuaUlasanBuku->num_rows ?>)
+              &#128172; Ulasan Pembaca (<?= $totalRevs ?>)
             </div>
-            <?php while ($rev = $semuaUlasanBuku->fetch_assoc()):
+            <?php foreach($allRevs as $rev):
               $initial = mb_strtoupper(mb_substr($rev['NamaLengkap'] ?? '?', 0, 1));
               $isMine  = ($rev['UserID'] == $uid);
             ?>
@@ -517,8 +566,9 @@ $activePage = 'ulasan';
               </div>
               <div class="review-text"><?= nl2br(htmlspecialchars($rev['Ulasan'])) ?></div>
             </div>
-            <?php endwhile; ?>
+            <?php endforeach; ?>
           </div>
+
           <?php else: ?>
           <div style="background:#f9fafb;border-radius:12px;border:1px dashed #d1d5db;padding:26px;text-align:center;color:#9ca3af;">
             <div style="font-size:32px;margin-bottom:7px">&#128172;</div>
@@ -536,16 +586,16 @@ $activePage = 'ulasan';
 </div>
 
 <script>
-const hints = ['','&#128542; Mengecewakan','&#128528; Biasa','&#128578; Cukup Bagus','&#128522; Bagus','&#129321; Luar Biasa!'];
-document.querySelectorAll('.star-input-wrap input').forEach(inp => {
+var hints = ['','&#128542; Mengecewakan','&#128528; Biasa','&#128578; Cukup Bagus','&#128522; Bagus','&#129321; Luar Biasa!'];
+document.querySelectorAll('.star-input-wrap input').forEach(function(inp) {
     inp.addEventListener('change', function() {
-        const el = document.getElementById('starHint');
+        var el = document.getElementById('starHint');
         if (el) el.innerHTML = hints[this.value] || '';
     });
 });
-const ta = document.getElementById('ulasanText');
-const cn = document.getElementById('charNow');
-if (ta && cn) ta.addEventListener('input', () => { cn.textContent = ta.value.length; });
+var ta = document.getElementById('ulasanText');
+var cn = document.getElementById('charNow');
+if (ta && cn) ta.addEventListener('input', function() { cn.textContent = ta.value.length; });
 function toggleSidebar(){
     document.getElementById('sidebar').classList.toggle('open');
     document.getElementById('overlay').classList.toggle('open');

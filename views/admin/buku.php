@@ -26,7 +26,7 @@ $coverBaseURL = rtrim($projectRoot, '/') . '/public/uploads/covers/';
 function simpanCover($file, $dir) {
     if ($file['error'] !== UPLOAD_ERR_OK || $file['size'] === 0) return '';
     $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-    $izin = ['jpg','jpeg','png','webp','gif'];
+    $izin = array('jpg','jpeg','png','webp','gif');
     if (!in_array($ext, $izin)) return '';
     if ($file['size'] > 3 * 1024 * 1024) return '';
     $nama = 'cover_' . uniqid() . '.' . $ext;
@@ -41,7 +41,6 @@ function hapusCover($nama, $dir) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    // ── TAMBAH ────────────────────────────────────────────────────────────────
     if ($action === 'tambah') {
         $judul     = trim($_POST['judul']     ?? '');
         $penulis   = trim($_POST['penulis']   ?? '');
@@ -65,12 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $hasDenda = $colCheck && $colCheck->num_rows > 0;
 
             if ($hasDenda) {
-                // Judul(s) Penulis(s) Penerbit(s) Tahun(i) Kategori(i) Stok(i) Deskripsi(s) Cover(s) Denda(i)
                 $sql  = "INSERT INTO buku (Judul,Penulis,Penerbit,TahunTerbit,KategoriID,Stok,Deskripsi,CoverURL,DendaPerHari) VALUES (?,?,?,?,?,?,?,?,?)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param('sssiiissi', $judul, $penulis, $penerbit, $tahun, $kategori, $stok, $deskripsi, $coverNama, $dendaHari);
             } else {
-                // Judul(s) Penulis(s) Penerbit(s) Tahun(i) Kategori(i) Stok(i) Deskripsi(s) Cover(s)
                 $sql  = "INSERT INTO buku (Judul,Penulis,Penerbit,TahunTerbit,KategoriID,Stok,Deskripsi,CoverURL) VALUES (?,?,?,?,?,?,?,?)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param('sssiiiss', $judul, $penulis, $penerbit, $tahun, $kategori, $stok, $deskripsi, $coverNama);
@@ -86,7 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ── EDIT ──────────────────────────────────────────────────────────────────
     if ($action === 'edit') {
         $id        = (int)($_POST['id']        ?? 0);
         $judul     = trim($_POST['judul']      ?? '');
@@ -104,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $coverBaru = $coverLama;
 
-            // Proses upload cover baru
             if (!empty($_FILES['cover']['name']) && $_FILES['cover']['error'] === UPLOAD_ERR_OK) {
                 $up = simpanCover($_FILES['cover'], $uploadDir);
                 if ($up !== '') {
@@ -115,7 +110,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            // Hapus cover jika dicentang
             if (!empty($_POST['hapus_cover'])) {
                 hapusCover($coverBaru, $uploadDir);
                 $coverBaru = '';
@@ -125,23 +119,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $hasDenda = $colCheck && $colCheck->num_rows > 0;
 
             if ($hasDenda) {
-                // FIX: 'sssiiissii' — Judul(s) Penulis(s) Penerbit(s) Tahun(i) Kategori(i) Stok(i) Deskripsi(s) Cover(s) Denda(i) ID(i)
                 $sql  = "UPDATE buku SET Judul=?,Penulis=?,Penerbit=?,TahunTerbit=?,KategoriID=?,Stok=?,Deskripsi=?,CoverURL=?,DendaPerHari=? WHERE BukuID=?";
                 $stmt = $conn->prepare($sql);
-                $stmt->bind_param('sssiiissii',
-                    $judul, $penulis, $penerbit, $tahun,
-                    $kategori, $stok, $deskripsi, $coverBaru,
-                    $dendaHari, $id
-                );
+                $stmt->bind_param('sssiiissii', $judul, $penulis, $penerbit, $tahun, $kategori, $stok, $deskripsi, $coverBaru, $dendaHari, $id);
             } else {
-                // FIX: 'sssiiissi' — Judul(s) Penulis(s) Penerbit(s) Tahun(i) Kategori(i) Stok(i) Deskripsi(s) Cover(s) ID(i)
                 $sql  = "UPDATE buku SET Judul=?,Penulis=?,Penerbit=?,TahunTerbit=?,KategoriID=?,Stok=?,Deskripsi=?,CoverURL=? WHERE BukuID=?";
                 $stmt = $conn->prepare($sql);
-                $stmt->bind_param('sssiiissi',
-                    $judul, $penulis, $penerbit, $tahun,
-                    $kategori, $stok, $deskripsi, $coverBaru,
-                    $id
-                );
+                $stmt->bind_param('sssiiissi', $judul, $penulis, $penerbit, $tahun, $kategori, $stok, $deskripsi, $coverBaru, $id);
             }
             if (!$stmt) die("Prepare gagal: " . $conn->error);
 
@@ -153,7 +137,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ── HAPUS ─────────────────────────────────────────────────────────────────
     if ($action === 'hapus') {
         $id  = (int)($_POST['id'] ?? 0);
         $row = $conn->query("SELECT CoverURL FROM buku WHERE BukuID=$id")->fetch_assoc();
@@ -170,23 +153,48 @@ $where  = $search ? "WHERE b.Judul LIKE '%$search%' OR b.Penulis LIKE '%$search%
 $colCheck = $conn->query("SHOW COLUMNS FROM buku LIKE 'DendaPerHari'");
 $hasDenda = $colCheck && $colCheck->num_rows > 0;
 
+// Cek apakah tabel ulasanbuku ada
+$cekUlasan = $conn->query("SHOW TABLES LIKE 'ulasanbuku'");
+$hasUlasan = $cekUlasan && $cekUlasan->num_rows > 0;
+
 $result = $conn->query("
     SELECT b.*, k.NamaKategori
+    " . ($hasUlasan ? ", ROUND(AVG(u.Rating),1) AS RataRating, COUNT(u.UlasanID) AS JmlUlasan" : ", NULL AS RataRating, 0 AS JmlUlasan") . "
     FROM buku b
     LEFT JOIN kategoribuku k ON b.KategoriID = k.KategoriID
+    " . ($hasUlasan ? "LEFT JOIN ulasanbuku u ON b.BukuID = u.BukuID" : "") . "
     $where
+    GROUP BY b.BukuID
     ORDER BY b.BukuID DESC
 ");
 if (!$result) die("Query gagal: " . $conn->error);
 
 $katResult = $conn->query("SELECT * FROM kategoribuku ORDER BY NamaKategori");
 
-$semua_buku     = [];
-$semua_kategori = [];
+$semua_buku     = array();
+$semua_kategori = array();
 while ($r = $result->fetch_assoc())    $semua_buku[]     = $r;
 while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
 
-[$msgType, $msgText] = $msg ? explode('|', $msg, 2) : ['', ''];
+// Ambil ulasan per buku untuk modal
+$ulasanPerBuku = array();
+if ($hasUlasan) {
+    $ulasanQ = $conn->query("
+        SELECT u.UlasanID, u.BukuID, u.Ulasan, u.Rating, u.CreatedAt,
+               us.NamaLengkap, us.UserID
+        FROM ulasanbuku u
+        JOIN user us ON u.UserID = us.UserID
+        ORDER BY u.CreatedAt DESC
+    ");
+    if ($ulasanQ) {
+        while ($ur = $ulasanQ->fetch_assoc()) {
+            $ulasanPerBuku[$ur['BukuID']][] = $ur;
+        }
+    }
+}
+
+$msgArr  = $msg ? explode('|', $msg, 2) : array('', '');
+$msgType = $msgArr[0]; $msgText = $msgArr[1] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -223,6 +231,46 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
     .denda-input-row input:focus{outline:none;border-color:#f97316;box-shadow:0 0 0 3px rgba(249,115,22,.1);}
     .denda-preview-text{font-size:12px;color:#9a3412;margin-top:6px;}
     .denda-col{font-size:12px;font-weight:700;color:#c2410c;}
+
+    /* ── Rating ── */
+    .rating-col{display:flex;flex-direction:column;gap:2px;}
+    .rating-stars{font-size:12px;color:#f59e0b;}
+    .rating-val{font-size:12px;font-weight:700;color:#d97706;}
+    .rating-cnt{font-size:11px;color:#9ca3af;}
+    .btn-ulasan{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;font-size:11px;font-weight:600;border-radius:6px;border:1.5px solid #7c3aed;color:#7c3aed;background:#fff;cursor:pointer;transition:all .18s;font-family:'DM Sans',sans-serif;}
+    .btn-ulasan:hover{background:#7c3aed;color:#fff;}
+
+    /* ── Modal Ulasan ── */
+    .modal-ulasan{display:none;position:fixed;inset:0;background:rgba(10,10,20,.58);backdrop-filter:blur(7px);z-index:9999;align-items:center;justify-content:center;padding:16px;}
+    .modal-ulasan.active{display:flex;}
+    .mu-box{background:#fff;border-radius:20px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:0 28px 70px rgba(0,0,0,.22);}
+    .mu-header{background:linear-gradient(135deg,#1e1e2f,#4a4a7a);padding:20px 22px;border-radius:20px 20px 0 0;color:#fff;position:relative;}
+    .mu-header h3{font-family:'Playfair Display',serif;font-size:18px;margin:0 0 4px;}
+    .mu-header p{font-size:12px;color:rgba(255,255,255,.6);margin:0;}
+    .mu-close{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.15);border:none;color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:17px;line-height:28px;text-align:center;}
+    .mu-close:hover{background:rgba(255,255,255,.3);}
+    .mu-body{padding:20px 22px 24px;}
+    .mu-stat{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:12px;padding:14px 16px;margin-bottom:18px;}
+    .mu-stat-big{font-size:36px;font-weight:700;font-family:'Playfair Display',serif;color:#d97706;line-height:1;}
+    .mu-stat-stars{font-size:20px;color:#f59e0b;margin-bottom:3px;}
+    .mu-stat-sub{font-size:12px;color:#92400e;}
+    .mu-empty{text-align:center;padding:30px;color:#9ca3af;}
+    .mu-empty .ei{font-size:36px;margin-bottom:8px;}
+
+    .review-card-adm{background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;padding:13px 15px;margin-bottom:9px;}
+    .review-card-adm:last-child{margin-bottom:0;}
+    .rca-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;}
+    .rca-user{display:flex;align-items:center;gap:8px;}
+    .rca-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#1e1e2f,#4a4a7a);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;}
+    .rca-name{font-size:13px;font-weight:600;color:#1e1e2f;}
+    .rca-date{font-size:11px;color:#9ca3af;}
+    .rca-stars{font-size:13px;color:#f59e0b;}
+    .rca-text{font-size:13px;color:#374151;line-height:1.5;}
+    .bar-stars{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+    .bar-stars .label{font-size:11px;color:#6b7280;width:38px;text-align:right;}
+    .bar-track{flex:1;height:8px;background:#f3f4f6;border-radius:4px;overflow:hidden;}
+    .bar-fill{height:100%;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:4px;}
+    .bar-cnt{font-size:11px;color:#9ca3af;width:24px;}
     </style>
 </head>
 <body>
@@ -250,8 +298,8 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
 
         <?php if (!$hasDenda): ?>
         <div class="alert alert-warning">
-            ⚠️ Kolom <code>DendaPerHari</code> belum ada di tabel <code>buku</code>. Jalankan SQL berikut di phpMyAdmin:
-            <br><code style="background:#fff3cd;padding:4px 8px;border-radius:4px;display:inline-block;margin-top:6px;">
+            ⚠️ Kolom <code>DendaPerHari</code> belum ada. Jalankan:
+            <code style="background:#fff3cd;padding:4px 8px;border-radius:4px;display:inline-block;margin-top:6px;">
                 ALTER TABLE buku ADD COLUMN DendaPerHari INT NOT NULL DEFAULT 5000;
             </code>
         </div>
@@ -278,12 +326,17 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
                             <th>Tahun</th>
                             <th>Stok</th>
                             <th>Denda/Hari</th>
+                            <th>Rating</th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
                     <tbody>
                     <?php if (count($semua_buku) > 0): ?>
-                        <?php $no=1; foreach ($semua_buku as $b): ?>
+                        <?php $no=1; foreach ($semua_buku as $b):
+                            $jmlUlasan  = (int)($b['JmlUlasan'] ?? 0);
+                            $rataRating = $b['RataRating'] ? round((float)$b['RataRating'], 1) : 0;
+                            $bukuUlasan = $ulasanPerBuku[$b['BukuID']] ?? array();
+                        ?>
                         <tr>
                             <td><?= $no++ ?></td>
                             <td>
@@ -312,6 +365,23 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
                                     Rp <?= number_format($hasDenda && isset($b['DendaPerHari']) ? (int)$b['DendaPerHari'] : 5000, 0, ',', '.') ?>/hari
                                 </span>
                             </td>
+                            <!-- Kolom Rating -->
+                            <td>
+                                <div class="rating-col">
+                                    <?php if ($jmlUlasan > 0): ?>
+                                        <span class="rating-val">
+                                            <?php for($s=1;$s<=5;$s++) echo $s<=$rataRating ? '⭐' : '☆'; ?>
+                                        </span>
+                                        <span class="rating-val"><?= $rataRating ?>/5</span>
+                                        <span class="rating-cnt"><?= $jmlUlasan ?> ulasan</span>
+                                        <button class="btn-ulasan" onclick="bukaModalUlasan(<?= $b['BukuID'] ?>, '<?= addslashes(htmlspecialchars($b['Judul'])) ?>')">
+                                            💬 Lihat
+                                        </button>
+                                    <?php else: ?>
+                                        <span class="rating-cnt">Belum ada ulasan</span>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                             <td>
                                 <div class="aksi-wrap">
                                     <button type="button" class="btn btn-sm btn-warning"
@@ -337,11 +407,25 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
                         </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="9"><div class="empty-state"><p>Tidak ada buku ditemukan.</p></div></td></tr>
+                        <tr><td colspan="10"><div class="empty-state"><p>Tidak ada buku ditemukan.</p></div></td></tr>
                     <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ MODAL ULASAN BUKU ═══ -->
+<div class="modal-ulasan" id="modalUlasan">
+    <div class="mu-box">
+        <div class="mu-header">
+            <button class="mu-close" onclick="tutupModalUlasan()">×</button>
+            <h3 id="muJudul">—</h3>
+            <p>⭐ Ulasan & Rating dari Pembaca</p>
+        </div>
+        <div class="mu-body" id="muBody">
+            <div class="mu-empty"><div class="ei">💬</div><p>Memuat ulasan...</p></div>
         </div>
     </div>
 </div>
@@ -507,8 +591,23 @@ while ($k = $katResult->fetch_assoc()) $semua_kategori[] = $k;
     </div>
 </div>
 
+<?php
+// Encode data ulasan ke JSON untuk digunakan di JS
+$ulasanJson = array();
+foreach ($semua_buku as $b) {
+    $bid = $b['BukuID'];
+    $ulasanJson[$bid] = array(
+        'judul'     => $b['Judul'],
+        'rating'    => round((float)($b['RataRating'] ?? 0), 1),
+        'jml'       => (int)($b['JmlUlasan'] ?? 0),
+        'ulasan'    => $ulasanPerBuku[$bid] ?? array()
+    );
+}
+?>
+
 <script>
-const COVER_BASE = '<?= $coverBaseURL ?>';
+const COVER_BASE  = '<?= $coverBaseURL ?>';
+const ULASAN_DATA = <?= json_encode($ulasanJson, JSON_UNESCAPED_UNICODE) ?>;
 
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('open');
@@ -518,10 +617,10 @@ function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 function previewCover(input, imgId, emptyId) {
-    const img = document.getElementById(imgId), empty = document.getElementById(emptyId);
+    var img = document.getElementById(imgId), empty = document.getElementById(emptyId);
     if (input.files && input.files[0]) {
-        const reader = new FileReader();
-        reader.onload = e => { img.src=e.target.result; img.style.display='block'; if(empty) empty.style.display='none'; };
+        var reader = new FileReader();
+        reader.onload = function(e) { img.src=e.target.result; img.style.display='block'; if(empty) empty.style.display='none'; };
         reader.readAsDataURL(input.files[0]);
     }
 }
@@ -530,8 +629,8 @@ function fmtRupiah(n) {
     return 'Rp ' + Number(n).toLocaleString('id-ID');
 }
 function updateDendaPreview(prefix, val) {
-    const v = parseInt(val) || 0;
-    const pfx = prefix + '_';
+    var v = parseInt(val) || 0;
+    var pfx = prefix + '_';
     document.getElementById(pfx+'d1').textContent  = fmtRupiah(v * 1);
     document.getElementById(pfx+'d2').textContent  = fmtRupiah(v * 2);
     document.getElementById(pfx+'d3').textContent  = fmtRupiah(v * 3);
@@ -539,7 +638,7 @@ function updateDendaPreview(prefix, val) {
     document.getElementById(pfx+'d7').textContent  = fmtRupiah(v * 7);
     document.getElementById(pfx+'dst').textContent = Number(v).toLocaleString('id-ID');
     document.getElementById(pfx+'denda_desc').innerHTML =
-        `Setiap hari keterlambatan dikenakan denda <strong>${fmtRupiah(v)}</strong>`;
+        'Setiap hari keterlambatan dikenakan denda <strong>' + fmtRupiah(v) + '</strong>';
 }
 
 function bukaEdit(id, judul, penulis, penerbit, tahun, kategori, stok, deskripsi, coverUrl, dendaHari) {
@@ -554,13 +653,12 @@ function bukaEdit(id, judul, penulis, penerbit, tahun, kategori, stok, deskripsi
     document.getElementById('editCoverLama').value  = coverUrl;
     document.getElementById('e_denda_input').value  = dendaHari || 5000;
 
-    // Reset file input & checkbox hapus
     document.getElementById('e_cover_input').value = '';
-    const hapusCb = document.querySelector('#formEdit input[name="hapus_cover"]');
+    var hapusCb = document.querySelector('#formEdit input[name="hapus_cover"]');
     if (hapusCb) hapusCb.checked = false;
 
-    const img   = document.getElementById('e_prev_img');
-    const empty = document.getElementById('e_prev_empty');
+    var img   = document.getElementById('e_prev_img');
+    var empty = document.getElementById('e_prev_empty');
     if (coverUrl) {
         img.src           = COVER_BASE + coverUrl;
         img.style.display = 'block';
@@ -573,6 +671,82 @@ function bukaEdit(id, judul, penulis, penerbit, tahun, kategori, stok, deskripsi
 
     updateDendaPreview('e', dendaHari || 5000);
     openModal('modalEdit');
+}
+
+// ── Modal Ulasan ──
+function bukaModalUlasan(bukuId, judul) {
+    var modal = document.getElementById('modalUlasan');
+    var body  = document.getElementById('muBody');
+    document.getElementById('muJudul').textContent = judul;
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    var data = ULASAN_DATA[bukuId];
+    if (!data || data.jml === 0) {
+        body.innerHTML = '<div class="mu-empty"><div class="ei">💬</div><p>Buku ini belum mendapat ulasan.</p></div>';
+        return;
+    }
+
+    // Hitung distribusi bintang
+    var dist = {1:0, 2:0, 3:0, 4:0, 5:0};
+    data.ulasan.forEach(function(u) { dist[u.Rating] = (dist[u.Rating]||0) + 1; });
+    var maxDist = Math.max.apply(null, Object.values(dist)) || 1;
+
+    var starsHtml = '';
+    for (var s=1; s<=5; s++) { starsHtml += s <= Math.round(data.rating) ? '⭐' : '☆'; }
+
+    var barHtml = '';
+    for (var b=5; b>=1; b--) {
+        var pct = Math.round((dist[b]||0) / data.jml * 100);
+        barHtml += '<div class="bar-stars">' +
+            '<div class="label">' + b + ' ★</div>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="bar-cnt">' + (dist[b]||0) + '</div>' +
+        '</div>';
+    }
+
+    var statHtml = '<div class="mu-stat">' +
+        '<div><div class="mu-stat-big">' + (data.rating || '—') + '</div>' +
+        '<div class="mu-stat-stars">' + starsHtml + '</div>' +
+        '<div class="mu-stat-sub">' + data.jml + ' ulasan</div></div>' +
+        '<div style="flex:1">' + barHtml + '</div>' +
+        '</div>';
+
+    var reviewsHtml = '';
+    data.ulasan.forEach(function(u) {
+        var initial = (u.NamaLengkap || '?').charAt(0).toUpperCase();
+        var rStars  = '';
+        for (var s=1; s<=5; s++) rStars += s <= u.Rating ? '⭐' : '☆';
+        var tgl = u.CreatedAt ? u.CreatedAt.substring(0, 10).split('-').reverse().join('/') : '—';
+        reviewsHtml +=
+            '<div class="review-card-adm">' +
+              '<div class="rca-head">' +
+                '<div class="rca-user">' +
+                  '<div class="rca-avatar">' + initial + '</div>' +
+                  '<div><div class="rca-name">' + escHtml(u.NamaLengkap) + '</div>' +
+                  '<div class="rca-date">' + tgl + '</div></div>' +
+                '</div>' +
+                '<div class="rca-stars">' + rStars + '</div>' +
+              '</div>' +
+              '<div class="rca-text">' + escHtml(u.Ulasan) + '</div>' +
+            '</div>';
+    });
+
+    body.innerHTML = statHtml + '<div style="font-size:13px;font-weight:700;color:#1e1e2f;margin-bottom:10px;">💬 Semua Ulasan</div>' + reviewsHtml;
+}
+
+function tutupModalUlasan() {
+    document.getElementById('modalUlasan').classList.remove('active');
+    document.body.style.overflow = '';
+}
+document.getElementById('modalUlasan').addEventListener('click', function(e) {
+    if (e.target === this) tutupModalUlasan();
+});
+
+function escHtml(str) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(str || ''));
+    return d.innerHTML;
 }
 </script>
 </body>

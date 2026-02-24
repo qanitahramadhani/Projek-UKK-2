@@ -78,8 +78,7 @@ $filter = $_GET['status'] ?? '';
 $where  = "WHERE p.UserID=$uid";
 if ($filter) { $fe = $conn->real_escape_string($filter); $where .= " AND p.StatusPeminjaman='$fe'"; }
 
-// ─── Query utama — disamakan dengan admin/petugas ─────────────────────────────
-// Tambah: TotalDenda, StatusBayarDenda, TanggalKembaliAktual, DendaPerHari
+// ─── Query utama ──────────────────────────────────────────────────────────────
 $pinjam = $conn->query("
     SELECT
         p.*,
@@ -96,9 +95,9 @@ $pinjam = $conn->query("
 ");
 if (!$pinjam) die("DB Error: " . $conn->error);
 
-$rows             = [];
-$totalDendaAktif  = 0; // estimasi denda buku yang masih dipinjam/terlambat
-$totalDendaBelum  = 0; // denda sudah dikembalikan tapi belum lunas
+$rows             = array();
+$totalDendaAktif  = 0;
+$totalDendaBelum  = 0;
 $jumlahTelat      = 0;
 
 while ($row = $pinjam->fetch_assoc()) {
@@ -108,15 +107,13 @@ while ($row = $pinjam->fetch_assoc()) {
     $totalDenda = (float)$row['TotalDenda'];
     $statusBayar= $row['StatusBayarDenda'];
 
-    if (in_array($status, ['dipinjam','terlambat']) && $ht > 0) {
-        // Aktif terlambat: hitung estimasi
+    if (in_array($status, array('dipinjam','terlambat')) && $ht > 0) {
         $row['_denda']      = $ht * $dendaHari;
         $row['_hariTelat']  = $ht;
-        $row['_dendaType']  = 'estimasi'; // bukan dari DB, belum pasti
+        $row['_dendaType']  = 'estimasi';
         $totalDendaAktif   += $row['_denda'];
         $jumlahTelat++;
     } elseif ($status === 'dikembalikan') {
-        // Sudah dikembalikan: pakai TotalDenda dari DB (yang dicatat petugas)
         $row['_denda']      = $totalDenda;
         $row['_hariTelat']  = 0;
         $row['_dendaType']  = 'final';
@@ -133,6 +130,11 @@ while ($row = $pinjam->fetch_assoc()) {
     $row['_dendaHari']  = $dendaHari;
     $rows[] = $row;
 }
+
+// ─── Hitung stat (FIX: ganti arrow function fn() => dengan function() kompatibel PHP 5.3+) ───
+$cntAktif     = count(array_filter($rows, function($r) { return in_array($r['StatusPeminjaman'], array('dipinjam','terlambat')); }));
+$cntKembali   = count(array_filter($rows, function($r) { return $r['StatusPeminjaman'] === 'dikembalikan'; }));
+$cntTerlambat = count(array_filter($rows, function($r) { return $r['StatusPeminjaman'] === 'terlambat'; }));
 
 $activePage = 'peminjaman';
 $today      = date('Y-m-d');
@@ -153,11 +155,11 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
 .alert-warning{background:#fff3cd;color:#856404;border-color:#ffeeba}
 .alert-danger {background:#f8d7da;color:#721c24;border-color:#f5c6cb}
 
-/* ── Cover (identik semua halaman) ── */
+/* ── Cover ── */
 .cover-thumb{width:42px;height:58px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block;}
 .cover-placeholder{width:42px;height:58px;border-radius:6px;border:1px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:20px;color:#94a3b8;background:#f8fafc;}
 
-/* ── Denda cells (identik admin/petugas) ── */
+/* ── Denda cells ── */
 .denda-wrap   {display:flex;flex-direction:column;gap:2px;}
 .denda-rate   {font-size:12px;font-weight:700;color:#d97706;}
 .denda-est    {font-size:11px;color:#ef4444;}
@@ -165,7 +167,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
 .denda-nol    {font-size:13px;color:#94a3b8;}
 .telat-info   {font-size:10px;color:#ef4444;display:block;margin-top:2px;}
 
-/* ── Status Bayar badges (identik admin/petugas) ── */
+/* ── Status Bayar badges ── */
 .badge-belum  {display:inline-flex;align-items:center;gap:4px;background:#fef2f2;color:#dc2626;border:1.5px solid #fca5a5;border-radius:6px;padding:3px 9px;font-size:11.5px;font-weight:700;}
 .badge-lunas  {display:inline-flex;align-items:center;gap:4px;background:#f0fdf4;color:#16a34a;border:1.5px solid #86efac;border-radius:6px;padding:3px 9px;font-size:11.5px;font-weight:700;}
 .badge-nodenda{display:inline-flex;align-items:center;gap:4px;background:#f8fafc;color:#64748b;border:1.5px solid #e2e8f0;border-radius:6px;padding:3px 9px;font-size:11.5px;}
@@ -242,7 +244,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
 .dur-bar.err{background:#fef2f2;color:#991b1b}
 .dur-bar .di{font-size:19px;flex-shrink:0} .dur-bar .dt{font-weight:600;line-height:1.4}
 
-/* ── Denda box di modal (sekarang dinamis) ── */
+/* ── Denda box di modal ── */
 .denda-box{background:linear-gradient(135deg,#fff7ed,#fff3e0);border:1.5px solid #fed7aa;border-radius:11px;padding:13px 15px;margin:14px 0}
 .denda-box-title{font-size:11.5px;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.6px;margin-bottom:9px;display:flex;align-items:center;gap:5px}
 .denda-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
@@ -376,7 +378,6 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
           <span class="di" id="repinjamDurIkon">&#9989;</span>
           <span class="dt" id="repinjamDurTeks">Durasi peminjaman: 7 hari</span>
         </div>
-        <!-- Denda box — dinamis dari DendaPerHari buku -->
         <div class="denda-box">
           <div class="denda-box-title">&#9888;&#65039; Denda Keterlambatan Buku Ini</div>
           <div class="denda-grid">
@@ -412,11 +413,6 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
     <?php endif; ?>
 
     <!-- ══ STAT MINI CARDS ══ -->
-    <?php
-    $cntAktif    = count(array_filter($rows, fn($r) => in_array($r['StatusPeminjaman'], ['dipinjam','terlambat'])));
-    $cntKembali  = count(array_filter($rows, fn($r) => $r['StatusPeminjaman'] === 'dikembalikan'));
-    $cntTerlambat= count(array_filter($rows, fn($r) => $r['StatusPeminjaman'] === 'terlambat'));
-    ?>
     <div class="stat-mini-grid">
       <div class="stat-mini blue">
         <span class="sm-icon">📖</span>
@@ -467,7 +463,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
     </div>
     <?php endif; ?>
 
-    <!-- Banner denda belum lunas (dari buku yang sudah dikembalikan) -->
+    <!-- Banner denda belum lunas -->
     <?php if ($totalDendaBelum > 0): ?>
     <div class="belum-lunas-banner">
       <span style="font-size:28px;flex-shrink:0">💸</span>
@@ -489,7 +485,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
         <form method="GET" class="search-bar">
           <select name="status" style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px">
             <option value="">Semua Status</option>
-            <?php foreach(['menunggu','dipinjam','dikembalikan','terlambat'] as $s): ?>
+            <?php foreach(array('menunggu','dipinjam','dikembalikan','terlambat') as $s): ?>
               <option value="<?= $s ?>" <?= $filter===$s?'selected':'' ?>><?= ucfirst($s) ?></option>
             <?php endforeach; ?>
           </select>
@@ -528,7 +524,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
           <?php else: ?>
           <?php $no=1; foreach($rows as $row):
             $status      = $row['StatusPeminjaman'];
-            $isDipinjam  = in_array($status, ['dipinjam','terlambat']);
+            $isDipinjam  = in_array($status, array('dipinjam','terlambat'));
             $jatuhTempo  = strtotime($row['TanggalPengembalian']);
             $today_ts    = strtotime('today');
             $sisaHari    = (int)ceil(($jatuhTempo - $today_ts) / 86400);
@@ -540,7 +536,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
             $adaDenda    = $row['_denda'] > 0;
             $coverUrl    = $row['_coverUrl'];
             $kembaliAktual = $row['TanggalKembaliAktual'] ?? null;
-            $bMap        = ['dipinjam'=>'badge-info','dikembalikan'=>'badge-success','terlambat'=>'badge-danger','menunggu'=>'badge-warning'];
+            $bMap        = array('dipinjam'=>'badge-info','dikembalikan'=>'badge-success','terlambat'=>'badge-danger','menunggu'=>'badge-warning');
           ?>
           <tr class="<?= $isTelat ? 'row-telat' : '' ?>">
             <td><?= $no++ ?></td>
@@ -565,7 +561,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
             <!-- Tgl Pinjam -->
             <td><?= date('d/m/Y', strtotime($row['TanggalPeminjaman'])) ?></td>
 
-            <!-- Jatuh Tempo (identik admin: merah jika terlambat) -->
+            <!-- Jatuh Tempo -->
             <td>
               <span style="color:<?= $isTelat ? '#ef4444' : 'inherit' ?>;font-weight:<?= $isTelat ? '600' : '400' ?>">
                 <?= date('d/m/Y', $jatuhTempo) ?>
@@ -575,7 +571,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
               <?php endif; ?>
             </td>
 
-            <!-- Tgl Kembali Aktual (identik admin) -->
+            <!-- Tgl Kembali Aktual -->
             <td>
               <?php if ($kembaliAktual): ?>
                 <strong><?= date('d/m/Y', strtotime($kembaliAktual)) ?></strong>
@@ -599,7 +595,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
               <?php endif; ?>
             </td>
 
-            <!-- Denda/Hari + estimasi (identik admin/petugas) -->
+            <!-- Denda/Hari + estimasi -->
             <td>
               <div class="denda-wrap">
                 <span class="denda-rate">Rp <?= number_format($dendaHari, 0, ',', '.') ?>/hari</span>
@@ -609,7 +605,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
               </div>
             </td>
 
-            <!-- Total Denda (identik admin/petugas) -->
+            <!-- Total Denda -->
             <td>
               <?php if ($status === 'dikembalikan' && $dendaDB > 0): ?>
                 <span class="denda-nominal">Rp <?= number_format($dendaDB, 0, ',', '.') ?></span>
@@ -622,7 +618,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
               <?php endif; ?>
             </td>
 
-            <!-- Status Bayar (identik admin/petugas) -->
+            <!-- Status Bayar -->
             <td>
               <?php if ($status !== 'dikembalikan'): ?>
                 <span class="badge-nodenda">— Belum kembali</span>
@@ -660,7 +656,7 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
                       <?= (float)$dendaHari ?>
                     )">🔄 Lagi</button>
                 <?php endif; ?>
-                <?php if (in_array($status, ['menunggu','dikembalikan'])): ?>
+                <?php if (in_array($status, array('menunggu','dikembalikan'))): ?>
                   <button class="btn-aksi btn-aksi-hapus"
                     onclick="bukaHapus(
                       <?= $row['PeminjamanID'] ?>,
@@ -680,7 +676,6 @@ $maxDate    = date('Y-m-d', strtotime('+60 days'));
 </div>
 
 <style>
-/* Row terlambat (identik admin/petugas) */
 tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
 </style>
 
@@ -689,39 +684,41 @@ const TODAY   = '<?= $today ?>';
 const MAXDATE = '<?= $maxDate ?>';
 
 function addDays(str, n) {
-    const d = new Date(str); d.setDate(d.getDate() + n);
+    var d = new Date(str); d.setDate(d.getDate() + n);
     return d.toISOString().split('T')[0];
 }
 function fmt(str) {
     if (!str) return '—';
-    const [y, m, d] = str.split('-');
-    return `${d}/${m}/${y}`;
+    var parts = str.split('-');
+    return parts[2] + '/' + parts[1] + '/' + parts[0];
 }
 function fmtRupiah(n) {
     return 'Rp ' + Number(n).toLocaleString('id-ID');
 }
 function tutupModal(id) { document.getElementById(id).classList.remove('active'); document.body.style.overflow = ''; }
 function bukaModal(id)  {
-    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+    document.querySelectorAll('.modal-overlay').forEach(function(m){ m.classList.remove('active'); });
     document.getElementById(id).classList.add('active');
     document.body.style.overflow = 'hidden';
 }
-document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => {
-    if (e.target === m) { m.classList.remove('active'); document.body.style.overflow = ''; }
-}));
-document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.active').forEach(m => {
+document.querySelectorAll('.modal-overlay').forEach(function(m){
+    m.addEventListener('click', function(e){
+        if (e.target === m) { m.classList.remove('active'); document.body.style.overflow = ''; }
+    });
+});
+document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.active').forEach(function(m){
         m.classList.remove('active'); document.body.style.overflow = '';
     });
 });
 
 function setCoverModal(prefix, coverUrl) {
-    const img   = document.getElementById(prefix + 'CoverImg');
-    const empty = document.getElementById(prefix + 'CoverEmpty');
-    const bg    = document.getElementById(prefix + 'CoverBg');
+    var img   = document.getElementById(prefix + 'CoverImg');
+    var empty = document.getElementById(prefix + 'CoverEmpty');
+    var bg    = document.getElementById(prefix + 'CoverBg');
     if (coverUrl) {
         img.src = coverUrl; img.style.display = 'block'; empty.style.display = 'none';
-        if (bg) bg.style.backgroundImage = `url('${coverUrl}')`;
+        if (bg) bg.style.backgroundImage = "url('" + coverUrl + "')";
     } else {
         img.style.display = 'none'; empty.style.display = 'flex';
     }
@@ -739,24 +736,24 @@ function bukaEdit(pid, judul, tglPinjam, tglKembaliLama, coverUrl) {
     bukaModal('modalEdit');
 }
 function tambahHariEdit(n) {
-    const cur  = document.getElementById('editTglKembali').value || TODAY;
-    const base = cur > TODAY ? cur : TODAY;
+    var cur  = document.getElementById('editTglKembali').value || TODAY;
+    var base = cur > TODAY ? cur : TODAY;
     document.getElementById('editTglKembali').value = addDays(base, n);
     hitungEdit();
 }
 function hitungEdit() {
-    const k    = document.getElementById('editTglKembali').value;
-    const bar  = document.getElementById('editDurBar');
-    const ikon = document.getElementById('editDurIkon');
-    const teks = document.getElementById('editDurTeks');
+    var k    = document.getElementById('editTglKembali').value;
+    var bar  = document.getElementById('editDurBar');
+    var ikon = document.getElementById('editDurIkon');
+    var teks = document.getElementById('editDurTeks');
     if (!k || k <= TODAY) {
         bar.className = 'dur-bar err'; ikon.textContent = '❌';
         teks.textContent = 'Tanggal kembali harus setelah hari ini.'; return;
     }
-    const days = Math.round((new Date(k) - new Date(TODAY)) / 86400000);
+    var days = Math.round((new Date(k) - new Date(TODAY)) / 86400000);
     bar.className = days > 30 ? 'dur-bar warn' : 'dur-bar ok';
     ikon.textContent = days > 30 ? '⚠️' : '✅';
-    teks.textContent = `Jatuh tempo baru: ${fmt(k)} (${days} hari dari sekarang)`;
+    teks.textContent = 'Jatuh tempo baru: ' + fmt(k) + ' (' + days + ' hari dari sekarang)';
 }
 document.getElementById('editTglKembali').addEventListener('change', hitungEdit);
 
@@ -768,8 +765,8 @@ function bukaHapus(pid, judul, coverUrl) {
     bukaModal('modalHapus');
 }
 
-// ── MODAL PINJAM LAGI (sekarang terima dendaHari dari buku) ────────────────
-let repinjamDendaHari = 5000;
+// ── MODAL PINJAM LAGI ────────────────────────────────────────────────────────
+var repinjamDendaHari = 5000;
 
 function bukaRepinjam(bukuId, judul, coverUrl, dendaHari) {
     repinjamDendaHari = dendaHari || 5000;
@@ -784,7 +781,7 @@ function bukaRepinjam(bukuId, judul, coverUrl, dendaHari) {
 }
 
 function updateDendaModal(rate) {
-    const r = parseInt(rate) || 5000;
+    var r = parseInt(rate) || 5000;
     document.getElementById('rd1').textContent    = fmtRupiah(r * 1);
     document.getElementById('rd2').textContent    = fmtRupiah(r * 2);
     document.getElementById('rd3').textContent    = fmtRupiah(r * 3);
@@ -794,47 +791,47 @@ function updateDendaModal(rate) {
 }
 
 function setDurasiRepinjam(days) {
-    const p = document.getElementById('repinjamTglPinjam').value || TODAY;
+    var p = document.getElementById('repinjamTglPinjam').value || TODAY;
     document.getElementById('repinjamTglKembali').value = addDays(p, days);
     hitungRepinjam();
 }
 function hitungRepinjam() {
-    const p    = document.getElementById('repinjamTglPinjam').value;
-    const k    = document.getElementById('repinjamTglKembali').value;
-    const bar  = document.getElementById('repinjamDurBar');
-    const ikon = document.getElementById('repinjamDurIkon');
-    const teks = document.getElementById('repinjamDurTeks');
-    const btn  = document.getElementById('btnRepinjamSubmit');
+    var p    = document.getElementById('repinjamTglPinjam').value;
+    var k    = document.getElementById('repinjamTglKembali').value;
+    var bar  = document.getElementById('repinjamDurBar');
+    var ikon = document.getElementById('repinjamDurIkon');
+    var teks = document.getElementById('repinjamDurTeks');
+    var btn  = document.getElementById('btnRepinjamSubmit');
     document.getElementById('repinjamTglKembali').min = addDays(p || TODAY, 1);
     if (!p || !k || k <= p) {
         bar.className = 'dur-bar err'; ikon.textContent = '❌';
         teks.textContent = 'Tanggal pengembalian harus setelah tanggal pinjam.';
         btn.disabled = true; return;
     }
-    const days = Math.round((new Date(k) - new Date(p)) / 86400000);
+    var days = Math.round((new Date(k) - new Date(p)) / 86400000);
     btn.disabled = false;
     if (days > 30) {
         bar.className = 'dur-bar warn'; ikon.textContent = '⚠️';
-        teks.textContent = `Durasi ${days} hari — pastikan tepat waktu.`;
+        teks.textContent = 'Durasi ' + days + ' hari — pastikan tepat waktu.';
     } else {
         bar.className = 'dur-bar ok'; ikon.textContent = '✅';
-        teks.textContent = `Durasi peminjaman: ${days} hari.`;
+        teks.textContent = 'Durasi peminjaman: ' + days + ' hari.';
     }
 }
 document.getElementById('repinjamTglPinjam').addEventListener('change', function() {
-    const k = document.getElementById('repinjamTglKembali');
+    var k = document.getElementById('repinjamTglKembali');
     if (k.value <= this.value) k.value = addDays(this.value, 1);
     hitungRepinjam();
 });
 document.getElementById('repinjamTglKembali').addEventListener('change', hitungRepinjam);
 document.getElementById('formRepinjam').addEventListener('submit', function(e) {
-    const p    = document.getElementById('repinjamTglPinjam').value;
-    const k    = document.getElementById('repinjamTglKembali').value;
-    const days = Math.round((new Date(k) - new Date(p)) / 86400000);
+    var p    = document.getElementById('repinjamTglPinjam').value;
+    var k    = document.getElementById('repinjamTglKembali').value;
+    var days = Math.round((new Date(k) - new Date(p)) / 86400000);
     if (days <= 0) { e.preventDefault(); return; }
-    const judul = document.getElementById('repinjamJudul').textContent;
-    const dendaTeks = fmtRupiah(repinjamDendaHari);
-    if (!confirm(`Pinjam "${judul}" selama ${days} hari?\n📅 Pinjam  : ${fmt(p)}\n🔔 Kembali : ${fmt(k)}\n⚠️ Denda keterlambatan ${dendaTeks}/hari.`)) e.preventDefault();
+    var judul = document.getElementById('repinjamJudul').textContent;
+    var dendaTeks = fmtRupiah(repinjamDendaHari);
+    if (!confirm('Pinjam "' + judul + '" selama ' + days + ' hari?\n📅 Pinjam  : ' + fmt(p) + '\n🔔 Kembali : ' + fmt(k) + '\n⚠️ Denda keterlambatan ' + dendaTeks + '/hari.')) e.preventDefault();
 });
 
 function toggleSidebar() {

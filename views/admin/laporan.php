@@ -20,6 +20,10 @@ $coverBaseURL = rtrim($projectRoot, '/') . '/public/uploads/covers/';
 $colCheck    = $conn->query("SHOW COLUMNS FROM buku LIKE 'DendaPerHari'");
 $hasDendaCol = $colCheck && $colCheck->num_rows > 0;
 
+// Cek tabel ulasanbuku
+$cekUlasan = $conn->query("SHOW TABLES LIKE 'ulasanbuku'");
+$hasUlasan = $cekUlasan && $cekUlasan->num_rows > 0;
+
 // ─── Statistik Utama ──────────────────────────────────────────────────────────
 $totalPinjam  = (int)($conn->query("SELECT COUNT(*) FROM peminjaman")->fetch_row()[0] ?? 0);
 $dikembalikan = (int)($conn->query("SELECT COUNT(*) FROM peminjaman WHERE StatusPeminjaman='dikembalikan'")->fetch_row()[0] ?? 0);
@@ -28,22 +32,18 @@ $dipinjam     = (int)($conn->query("SELECT COUNT(*) FROM peminjaman WHERE Status
 $totalAnggota = (int)($conn->query("SELECT COUNT(*) FROM user WHERE Role='peminjam'")->fetch_row()[0] ?? 0);
 $totalBuku    = (int)($conn->query("SELECT COUNT(*) FROM buku")->fetch_row()[0] ?? 0);
 
-// Denda lunas (sudah dikembalikan + StatusBayarDenda = Lunas) — dari kolom TotalDenda di DB
 $totalDendaLunas = (int)($conn->query(
     "SELECT COALESCE(SUM(TotalDenda),0) FROM peminjaman WHERE StatusPeminjaman='dikembalikan' AND StatusBayarDenda='Lunas'"
 )->fetch_row()[0] ?? 0);
 
-// Denda belum dibayar (sudah dikembalikan tapi Belum)
 $totalDendaBelum = (int)($conn->query(
     "SELECT COALESCE(SUM(TotalDenda),0) FROM peminjaman WHERE StatusPeminjaman='dikembalikan' AND StatusBayarDenda='Belum'"
 )->fetch_row()[0] ?? 0);
 
-// Jumlah transaksi denda belum lunas
 $cntDendaBelum = (int)($conn->query(
     "SELECT COUNT(*) FROM peminjaman WHERE StatusPeminjaman='dikembalikan' AND StatusBayarDenda='Belum'"
 )->fetch_row()[0] ?? 0);
 
-// Estimasi denda aktif (masih dipinjam / terlambat)
 $dendaSelect = $hasDendaCol
     ? "DATEDIFF(CURDATE(), p.TanggalPengembalian) * COALESCE(b.DendaPerHari, " . DENDA_DEFAULT . ")"
     : "DATEDIFF(CURDATE(), p.TanggalPengembalian) * " . DENDA_DEFAULT;
@@ -60,6 +60,12 @@ $totalDendaAktifQ = $conn->query("
 ");
 $totalDendaAktif = (int)($totalDendaAktifQ ? $totalDendaAktifQ->fetch_row()[0] : 0);
 
+// Total ulasan
+$totalUlasan = 0;
+if ($hasUlasan) {
+    $totalUlasan = (int)($conn->query("SELECT COUNT(*) FROM ulasanbuku")->fetch_row()[0] ?? 0);
+}
+
 // ─── Auto-update terlambat ────────────────────────────────────────────────────
 $conn->query("
     UPDATE peminjaman
@@ -69,7 +75,7 @@ $conn->query("
 ");
 
 // ─── Filter tabel daftar peminjam ────────────────────────────────────────────
-$filterTab = $_GET['filter'] ?? 'semua'; // semua | dipinjam | terlambat | dikembalikan | belum
+$filterTab = $_GET['filter'] ?? 'semua';
 $cariQ     = trim($_GET['q'] ?? '');
 
 $whereFilter = "WHERE 1=1";
@@ -82,7 +88,9 @@ if ($cariQ) {
     $whereFilter .= " AND (b.Judul LIKE '%$cEsc%' OR u.NamaLengkap LIKE '%$cEsc%')";
 }
 
-// Query disamakan dengan peminjaman.php: ambil TotalDenda, StatusBayarDenda, TanggalKembaliAktual, DendaPerHari
+$ulasanJoin    = $hasUlasan ? "LEFT JOIN ulasanbuku ul ON b.BukuID = ul.BukuID" : "";
+$ulasanSelect  = $hasUlasan ? ", ROUND(AVG(ul.Rating),1) AS RataRating, COUNT(DISTINCT ul.UlasanID) AS JmlUlasan" : ", NULL AS RataRating, 0 AS JmlUlasan";
+
 $daftarPeminjam = $conn->query("
     SELECT
         p.PeminjamanID,
@@ -98,10 +106,13 @@ $daftarPeminjam = $conn->query("
         b.DendaPerHari,
         u.NamaLengkap,
         DATEDIFF(CURDATE(), p.TanggalPengembalian) AS HariTelat
+        $ulasanSelect
     FROM peminjaman p
     JOIN user u ON p.UserID = u.UserID
     JOIN buku b ON p.BukuID = b.BukuID
+    $ulasanJoin
     $whereFilter
+    GROUP BY p.PeminjamanID
     ORDER BY
         CASE p.StatusPeminjaman
             WHEN 'terlambat'    THEN 1
@@ -112,8 +123,8 @@ $daftarPeminjam = $conn->query("
         p.TanggalPengembalian ASC
 ");
 
-// Hitung jumlah per tab untuk badge
-$tabCounts = [];
+// Tab counts
+$tabCounts = array();
 $tabQ = $conn->query("SELECT StatusPeminjaman, COUNT(*) AS n FROM peminjaman GROUP BY StatusPeminjaman");
 $tabCounts['semua']        = $totalPinjam;
 $tabCounts['dipinjam']     = 0;
@@ -125,17 +136,20 @@ if ($tabQ) while ($tc = $tabQ->fetch_assoc()) {
     if (isset($tabCounts[$s])) $tabCounts[$s] = (int)$tc['n'];
 }
 
-// ─── Buku Paling Populer ──────────────────────────────────────────────────────
-$bukuPopuler = $conn->query("
+// ─── Buku Paling Populer (dengan rating) ──────────────────────────────────────
+$bukuPopulerQ = "
     SELECT b.BukuID, b.Judul, b.Penulis, b.CoverURL, COUNT(p.PeminjamanID) AS total
+    " . ($hasUlasan ? ", ROUND(AVG(ul.Rating),1) AS RataRating, COUNT(DISTINCT ul.UlasanID) AS JmlUlasan" : ", NULL AS RataRating, 0 AS JmlUlasan") . "
     FROM peminjaman p
     JOIN buku b ON p.BukuID = b.BukuID
-    GROUP BY p.BukuID
+    " . ($hasUlasan ? "LEFT JOIN ulasanbuku ul ON b.BukuID = ul.BukuID" : "") . "
+    GROUP BY b.BukuID
     ORDER BY total DESC
     LIMIT 5
-");
+";
+$bukuPopuler = $conn->query($bukuPopulerQ);
 
-// ─── Peminjaman Per Bulan (6 bulan terakhir, untuk chart) ────────────────────
+// ─── Peminjaman Per Bulan ─────────────────────────────────────────────────────
 $perBulan = $conn->query("
     SELECT DATE_FORMAT(TanggalPeminjaman, '%Y-%m') AS bulan,
            DATE_FORMAT(TanggalPeminjaman, '%b %Y')  AS label,
@@ -145,8 +159,8 @@ $perBulan = $conn->query("
     GROUP BY bulan, label
     ORDER BY bulan ASC
 ");
-$chartLabels = [];
-$chartData   = [];
+$chartLabels = array();
+$chartData   = array();
 if ($perBulan) {
     while ($r = $perBulan->fetch_assoc()) {
         $chartLabels[] = $r['label'];
@@ -175,6 +189,37 @@ $anggotaAktif = $conn->query("
     ORDER BY total DESC
     LIMIT 5
 ");
+
+// ─── Ulasan Terbaru (jika ada) ────────────────────────────────────────────────
+$ulasanTerbaru = null;
+if ($hasUlasan) {
+    $ulasanTerbaru = $conn->query("
+        SELECT ul.UlasanID, ul.Rating, ul.Ulasan, ul.CreatedAt,
+               b.Judul, b.CoverURL,
+               us.NamaLengkap
+        FROM ulasanbuku ul
+        JOIN buku b ON ul.BukuID = b.BukuID
+        JOIN user us ON ul.UserID = us.UserID
+        ORDER BY ul.CreatedAt DESC
+        LIMIT 6
+    ");
+}
+
+// ─── Buku dengan rating tertinggi ─────────────────────────────────────────────
+$bukuRatingTerbaik = null;
+if ($hasUlasan) {
+    $bukuRatingTerbaik = $conn->query("
+        SELECT b.BukuID, b.Judul, b.Penulis, b.CoverURL,
+               ROUND(AVG(ul.Rating),1) AS RataRating,
+               COUNT(ul.UlasanID) AS JmlUlasan
+        FROM buku b
+        JOIN ulasanbuku ul ON b.BukuID = ul.BukuID
+        GROUP BY b.BukuID
+        HAVING JmlUlasan >= 1
+        ORDER BY RataRating DESC, JmlUlasan DESC
+        LIMIT 5
+    ");
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -184,11 +229,9 @@ $anggotaAktif = $conn->query("
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../../public/css/main.css">
 <style>
-/* ── Section Title ── */
 .section-title{font-family:'Playfair Display',serif;font-size:18px;color:#1e1e2f;margin:28px 0 14px;display:flex;align-items:center;gap:10px;}
 .section-title::after{content:'';flex:1;height:2px;background:linear-gradient(90deg,#e5e7eb,transparent);}
 
-/* ── Stat Cards ── */
 .stat-grid-6{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:8px;}
 .stat-card-v2{background:#fff;border-radius:14px;border:1px solid var(--border);padding:18px 20px;display:flex;flex-direction:column;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,.04);transition:transform .2s,box-shadow .2s;}
 .stat-card-v2:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.08);}
@@ -196,20 +239,14 @@ $anggotaAktif = $conn->query("
 .sc-val{font-size:26px;font-weight:700;font-family:'Playfair Display',serif;color:#1e1e2f;line-height:1;}
 .sc-lbl{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.6px;}
 .sc-sub{font-size:12px;color:#9ca3af;}
-.stat-card-v2.red   {border-color:#fca5a5;background:linear-gradient(135deg,#fff,#fef2f2);}
-.stat-card-v2.red   .sc-val{color:#dc2626;}
-.stat-card-v2.orange{border-color:#fed7aa;background:linear-gradient(135deg,#fff,#fff7ed);}
-.stat-card-v2.orange .sc-val{color:#ea580c;}
-.stat-card-v2.green {border-color:#bbf7d0;background:linear-gradient(135deg,#fff,#f0fdf4);}
-.stat-card-v2.green  .sc-val{color:#16a34a;}
-.stat-card-v2.blue  {border-color:#bfdbfe;background:linear-gradient(135deg,#fff,#eff6ff);}
-.stat-card-v2.blue   .sc-val{color:#2563eb;}
-.stat-card-v2.purple{border-color:#ddd6fe;background:linear-gradient(135deg,#fff,#f5f3ff);}
-.stat-card-v2.purple .sc-val{color:#7c3aed;}
-.stat-card-v2.gold  {border-color:#fde68a;background:linear-gradient(135deg,#fff,#fffbeb);}
-.stat-card-v2.gold   .sc-val{color:#d97706;}
+.stat-card-v2.red   {border-color:#fca5a5;background:linear-gradient(135deg,#fff,#fef2f2);} .stat-card-v2.red .sc-val{color:#dc2626;}
+.stat-card-v2.orange{border-color:#fed7aa;background:linear-gradient(135deg,#fff,#fff7ed);} .stat-card-v2.orange .sc-val{color:#ea580c;}
+.stat-card-v2.green {border-color:#bbf7d0;background:linear-gradient(135deg,#fff,#f0fdf4);} .stat-card-v2.green .sc-val{color:#16a34a;}
+.stat-card-v2.blue  {border-color:#bfdbfe;background:linear-gradient(135deg,#fff,#eff6ff);} .stat-card-v2.blue .sc-val{color:#2563eb;}
+.stat-card-v2.purple{border-color:#ddd6fe;background:linear-gradient(135deg,#fff,#f5f3ff);} .stat-card-v2.purple .sc-val{color:#7c3aed;}
+.stat-card-v2.gold  {border-color:#fde68a;background:linear-gradient(135deg,#fff,#fffbeb);} .stat-card-v2.gold .sc-val{color:#d97706;}
+.stat-card-v2.pink  {border-color:#fbcfe8;background:linear-gradient(135deg,#fff,#fdf2f8);} .stat-card-v2.pink .sc-val{color:#db2777;}
 
-/* ── Banner Terlambat ── */
 .terlambat-banner{background:linear-gradient(135deg,#fef2f2,#fee2e2);border:2px solid #fca5a5;border-radius:14px;padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .tb-icon{font-size:30px;flex-shrink:0;}
 .tb-body h4{font-family:'Playfair Display',serif;font-size:15px;color:#7f1d1d;margin:0 0 2px;}
@@ -218,11 +255,9 @@ $anggotaAktif = $conn->query("
 .tb-total .lbl{font-size:10px;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:.5px;}
 .tb-total .amt{font-size:20px;font-weight:700;color:#dc2626;font-family:'Playfair Display',serif;}
 
-/* ── Cover Thumb ── */
 .cover-thumb{width:42px;height:58px;object-fit:cover;border-radius:5px;border:1px solid #e2e8f0;display:block;}
 .cover-placeholder{width:42px;height:58px;border-radius:5px;border:1px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:20px;color:#94a3b8;background:#f8fafc;}
 
-/* ── Denda cells (identik dengan peminjaman.php) ── */
 .denda-wrap{display:flex;flex-direction:column;gap:2px;}
 .denda-rate{font-size:12px;font-weight:700;color:#d97706;}
 .denda-est {font-size:11px;color:#ef4444;}
@@ -230,21 +265,23 @@ $anggotaAktif = $conn->query("
 .denda-nol    {font-size:13px;color:#94a3b8;}
 .telat-info{font-size:10px;color:#ef4444;display:block;margin-top:2px;}
 
-/* ── Status Bayar badges (identik dengan peminjaman.php) ── */
 .badge-belum{display:inline-flex;align-items:center;gap:4px;background:#fef2f2;color:#dc2626;border:1.5px solid #fca5a5;border-radius:6px;padding:3px 9px;font-size:11.5px;font-weight:700;}
 .badge-lunas{display:inline-flex;align-items:center;gap:4px;background:#f0fdf4;color:#16a34a;border:1.5px solid #86efac;border-radius:6px;padding:3px 9px;font-size:11.5px;font-weight:700;}
 .badge-nodenda{display:inline-flex;align-items:center;gap:4px;background:#f8fafc;color:#64748b;border:1.5px solid #e2e8f0;border-radius:6px;padding:3px 9px;font-size:11.5px;}
 
-/* ── Chart Container ── */
+/* Rating col di tabel */
+.rating-wrap{display:flex;flex-direction:column;gap:1px;}
+.rating-stars-sm{font-size:11px;color:#f59e0b;}
+.rating-val-sm{font-size:11px;font-weight:700;color:#d97706;}
+.rating-cnt-sm{font-size:10px;color:#9ca3af;}
+
 .chart-wrap{background:#fff;border-radius:14px;border:1px solid var(--border);padding:20px 22px;box-shadow:0 2px 8px rgba(0,0,0,.04);}
 .chart-wrap h4{font-family:'Playfair Display',serif;font-size:16px;color:#1e1e2f;margin:0 0 16px;}
 .chart-canvas{width:100%;height:220px;}
 
-/* ── Two-col layout ── */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
 @media(max-width:800px){.two-col{grid-template-columns:1fr;}}
 
-/* ── Populer List ── */
 .populer-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #f3f4f6;}
 .populer-item:last-child{border-bottom:none;}
 .pop-rank{font-size:20px;width:32px;text-align:center;flex-shrink:0;}
@@ -253,26 +290,17 @@ $anggotaAktif = $conn->query("
 .pop-info{flex:1;}
 .pop-info h5{font-size:13px;font-weight:600;color:#1e1e2f;margin:0 0 2px;line-height:1.3;}
 .pop-info p{font-size:11px;color:#6b7280;margin:0;}
+.pop-info .pop-rating{font-size:11px;color:#f59e0b;margin-top:2px;}
 .pop-count{font-size:13px;font-weight:700;color:#7c3aed;background:#f5f3ff;border-radius:6px;padding:3px 8px;flex-shrink:0;}
 
-/* ── Kategori Bar ── */
 .kat-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
 .kat-bar-label{font-size:12px;font-weight:600;color:#374151;width:110px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .kat-bar-track{flex:1;height:10px;background:#f3f4f6;border-radius:6px;overflow:hidden;}
 .kat-bar-fill{height:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);border-radius:6px;transition:width .6s ease;}
 .kat-bar-val{font-size:11px;font-weight:700;color:#6366f1;width:30px;text-align:right;flex-shrink:0;}
 
-/* ── Filter Tabs ── */
 .filter-tabs{display:flex;gap:0;flex-wrap:wrap;margin-bottom:0;}
-.filter-tab{
-    display:inline-flex;align-items:center;gap:7px;
-    padding:10px 18px;font-size:13px;font-weight:600;
-    border:1.5px solid var(--border);border-bottom:none;
-    background:#f9fafb;color:#6b7280;
-    text-decoration:none;transition:all .18s;
-    border-radius:10px 10px 0 0;
-    position:relative;top:1px;
-}
+.filter-tab{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;font-size:13px;font-weight:600;border:1.5px solid var(--border);border-bottom:none;background:#f9fafb;color:#6b7280;text-decoration:none;transition:all .18s;border-radius:10px 10px 0 0;position:relative;top:1px;}
 .filter-tab:hover{background:#fff;color:#1e1e2f;}
 .filter-tab.active{background:#fff;color:#1e1e2f;border-color:#e5e7eb;z-index:1;}
 .filter-tab.tab-blue.active  {color:#2563eb;border-top:2.5px solid #2563eb;}
@@ -280,27 +308,44 @@ $anggotaAktif = $conn->query("
 .filter-tab.tab-green.active {color:#16a34a;border-top:2.5px solid #16a34a;}
 .filter-tab.tab-orange.active{color:#d97706;border-top:2.5px solid #d97706;}
 .filter-tab.tab-default.active{color:#1e1e2f;border-top:2.5px solid #1e1e2f;}
-.tab-count{
-    font-size:11px;font-weight:700;
-    background:#e5e7eb;color:#374151;
-    border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;
-    transition:background .18s,color .18s;
-}
+.tab-count{font-size:11px;font-weight:700;background:#e5e7eb;color:#374151;border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;transition:background .18s,color .18s;}
 .filter-tab.tab-blue.active   .tab-count{background:#dbeafe;color:#1d4ed8;}
 .filter-tab.tab-red.active    .tab-count{background:#fee2e2;color:#b91c1c;}
 .filter-tab.tab-green.active  .tab-count{background:#dcfce7;color:#15803d;}
 .filter-tab.tab-orange.active .tab-count{background:#ffedd5;color:#c2410c;}
 .filter-tab.tab-default.active .tab-count{background:#f3f4f6;color:#1e1e2f;}
 
-/* ── Row highlight terlambat ── */
 tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
 
-/* ── Anggota ── */
 .anggota-item{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #f3f4f6;}
 .anggota-item:last-child{border-bottom:none;}
 .anggota-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#1e1e2f,#4a4a7a);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;}
 .anggota-name{flex:1;font-size:13px;font-weight:600;color:#1e1e2f;}
 .anggota-stats{display:flex;gap:6px;flex-shrink:0;}
+
+/* Ulasan terbaru */
+.ulasan-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
+.ulasan-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:13px 15px;}
+.uc-head{display:flex;align-items:center;gap:9px;margin-bottom:8px;}
+.uc-cover{width:36px;height:50px;object-fit:cover;border-radius:5px;border:1px solid #e2e8f0;flex-shrink:0;}
+.uc-cover-empty{width:36px;height:50px;border-radius:5px;border:1px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:16px;color:#94a3b8;flex-shrink:0;}
+.uc-info h5{font-size:12px;font-weight:700;color:#1e1e2f;margin:0 0 1px;line-height:1.3;}
+.uc-info p{font-size:11px;color:#6b7280;margin:0;}
+.uc-stars{font-size:12px;color:#f59e0b;margin:3px 0;}
+.uc-text{font-size:12px;color:#374151;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.uc-user{font-size:11px;color:#9ca3af;margin-top:6px;}
+
+/* Buku rating terbaik */
+.rating-top-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #f3f4f6;}
+.rating-top-item:last-child{border-bottom:none;}
+.rta-cover{width:34px;height:47px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0;flex-shrink:0;}
+.rta-cover-empty{width:34px;height:47px;border-radius:4px;border:1px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;font-size:14px;color:#94a3b8;flex-shrink:0;}
+.rta-info{flex:1;}
+.rta-info h5{font-size:12.5px;font-weight:600;color:#1e1e2f;margin:0 0 2px;line-height:1.3;}
+.rta-info p{font-size:11px;color:#6b7280;margin:0;}
+.rta-score{text-align:right;flex-shrink:0;}
+.rta-score .val{font-size:16px;font-weight:700;color:#f59e0b;font-family:'Playfair Display',serif;}
+.rta-score .cnt{font-size:10px;color:#9ca3af;}
 </style>
 </head>
 <body>
@@ -323,26 +368,10 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
     <!-- ══ STATISTIK UTAMA ══ -->
     <div class="section-title">📈 Ringkasan Keseluruhan</div>
     <div class="stat-grid-6">
-      <div class="stat-card-v2 gold">
-        <span class="sc-icon">📋</span>
-        <div class="sc-val"><?= $totalPinjam ?></div>
-        <div class="sc-lbl">Total Transaksi</div>
-      </div>
-      <div class="stat-card-v2 blue">
-        <span class="sc-icon">📖</span>
-        <div class="sc-val"><?= $dipinjam ?></div>
-        <div class="sc-lbl">Sedang Dipinjam</div>
-      </div>
-      <div class="stat-card-v2 green">
-        <span class="sc-icon">✅</span>
-        <div class="sc-val"><?= $dikembalikan ?></div>
-        <div class="sc-lbl">Dikembalikan</div>
-      </div>
-      <div class="stat-card-v2 red">
-        <span class="sc-icon">⚠️</span>
-        <div class="sc-val"><?= $terlambat ?></div>
-        <div class="sc-lbl">Terlambat</div>
-      </div>
+      <div class="stat-card-v2 gold"><span class="sc-icon">📋</span><div class="sc-val"><?= $totalPinjam ?></div><div class="sc-lbl">Total Transaksi</div></div>
+      <div class="stat-card-v2 blue"><span class="sc-icon">📖</span><div class="sc-val"><?= $dipinjam ?></div><div class="sc-lbl">Sedang Dipinjam</div></div>
+      <div class="stat-card-v2 green"><span class="sc-icon">✅</span><div class="sc-val"><?= $dikembalikan ?></div><div class="sc-lbl">Dikembalikan</div></div>
+      <div class="stat-card-v2 red"><span class="sc-icon">⚠️</span><div class="sc-val"><?= $terlambat ?></div><div class="sc-lbl">Terlambat</div></div>
       <div class="stat-card-v2 orange">
         <span class="sc-icon">💸</span>
         <div class="sc-val">Rp <?= number_format($totalDendaAktif, 0, ',', '.') ?></div>
@@ -359,18 +388,12 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
         <span class="sc-icon">💰</span>
         <div class="sc-val">Rp <?= number_format($totalDendaLunas, 0, ',', '.') ?></div>
         <div class="sc-lbl">Denda Lunas</div>
-        <div class="sc-sub">terkumpul dari pengembalian</div>
       </div>
-      <div class="stat-card-v2 purple">
-        <span class="sc-icon">👥</span>
-        <div class="sc-val"><?= $totalAnggota ?></div>
-        <div class="sc-lbl">Total Anggota</div>
-      </div>
-      <div class="stat-card-v2 blue">
-        <span class="sc-icon">📚</span>
-        <div class="sc-val"><?= $totalBuku ?></div>
-        <div class="sc-lbl">Koleksi Buku</div>
-      </div>
+      <div class="stat-card-v2 purple"><span class="sc-icon">👥</span><div class="sc-val"><?= $totalAnggota ?></div><div class="sc-lbl">Total Anggota</div></div>
+      <div class="stat-card-v2 blue"><span class="sc-icon">📚</span><div class="sc-val"><?= $totalBuku ?></div><div class="sc-lbl">Koleksi Buku</div></div>
+      <?php if ($hasUlasan): ?>
+      <div class="stat-card-v2 pink"><span class="sc-icon">⭐</span><div class="sc-val"><?= $totalUlasan ?></div><div class="sc-lbl">Total Ulasan</div><div class="sc-sub">dari seluruh pembaca</div></div>
+      <?php endif; ?>
     </div>
 
     <!-- ══ BANNER TERLAMBAT ══ -->
@@ -379,7 +402,7 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
       <div class="tb-icon">🚨</div>
       <div class="tb-body">
         <h4>Ada <?= $terlambat ?> Peminjam Terlambat Mengembalikan!</h4>
-        <p>Segera proses pengembalian melalui menu <strong>Manajemen Peminjaman</strong> dan tagihkan denda kepada peminjam.</p>
+        <p>Segera proses pengembalian melalui menu <strong>Manajemen Peminjaman</strong>.</p>
       </div>
       <div class="tb-total">
         <div class="lbl">Estimasi Total Denda</div>
@@ -399,7 +422,6 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
     <!-- ══ TABEL DAFTAR PEMINJAM ══ -->
     <div class="section-title">📋 Daftar Peminjam</div>
 
-    <!-- Search bar -->
     <form method="GET" style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <input type="hidden" name="filter" value="<?= htmlspecialchars($filterTab) ?>">
       <input type="text" name="q" placeholder="🔍 Cari nama peminjam / judul buku..."
@@ -411,16 +433,15 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
       <?php endif; ?>
     </form>
 
-    <!-- Filter tabs -->
     <div class="filter-tabs">
       <?php
-      $tabs = [
-          'semua'        => ['label' => 'Semua',             'icon' => '📋', 'color' => 'default'],
-          'dipinjam'     => ['label' => 'Sedang Dipinjam',   'icon' => '📖', 'color' => 'blue'],
-          'terlambat'    => ['label' => 'Terlambat',         'icon' => '🚨', 'color' => 'red'],
-          'dikembalikan' => ['label' => 'Dikembalikan',      'icon' => '✅', 'color' => 'green'],
-          'belum'        => ['label' => 'Denda Belum Bayar', 'icon' => '⚠️', 'color' => 'orange'],
-      ];
+      $tabs = array(
+          'semua'        => array('label' => 'Semua',             'icon' => '📋', 'color' => 'default'),
+          'dipinjam'     => array('label' => 'Sedang Dipinjam',   'icon' => '📖', 'color' => 'blue'),
+          'terlambat'    => array('label' => 'Terlambat',         'icon' => '🚨', 'color' => 'red'),
+          'dikembalikan' => array('label' => 'Dikembalikan',      'icon' => '✅', 'color' => 'green'),
+          'belum'        => array('label' => 'Denda Belum Bayar', 'icon' => '⚠️', 'color' => 'orange'),
+      );
       foreach ($tabs as $key => $tab):
           $active = $filterTab === $key;
           $count  = $tabCounts[$key] ?? 0;
@@ -450,6 +471,7 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
               <th>Denda/Hari</th>
               <th>Total Denda</th>
               <th>Status Bayar</th>
+              <th>Rating Buku</th>
             </tr>
           </thead>
           <tbody>
@@ -468,6 +490,8 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
               $statusBayar   = $t['StatusBayarDenda'];
               $adaDenda      = $totalDenda > 0;
               $kembaliAktual = $t['TanggalKembaliAktual'];
+              $rataRating    = $t['RataRating'] ? round((float)$t['RataRating'], 1) : 0;
+              $jmlUlasan     = (int)($t['JmlUlasan'] ?? 0);
           ?>
           <tr class="<?= $isTelat && $status !== 'dikembalikan' ? 'row-telat' : '' ?>">
             <td><?= $no++ ?></td>
@@ -483,8 +507,6 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
             <td><strong><?= htmlspecialchars($t['Judul']) ?></strong></td>
             <td><?= htmlspecialchars($t['NamaLengkap']) ?></td>
             <td><?= date('d/m/Y', strtotime($t['TanggalPeminjaman'])) ?></td>
-
-            <!-- Jatuh Tempo — warna merah jika terlambat (sama dengan peminjaman.php) -->
             <td>
               <span style="color:<?= $isTelat && $status !== 'dikembalikan' ? '#ef4444' : 'inherit' ?>;font-weight:<?= $isTelat && $status !== 'dikembalikan' ? '600' : '400' ?>">
                 <?= date('d/m/Y', $jatuhTempo) ?>
@@ -493,8 +515,6 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
                 <span class="telat-info">Terlambat <?= $hariTelat ?> hari</span>
               <?php endif; ?>
             </td>
-
-            <!-- Tgl Kembali Aktual (kolom baru, dari peminjaman.php) -->
             <td>
               <?php if ($kembaliAktual): ?>
                 <strong><?= date('d/m/Y', strtotime($kembaliAktual)) ?></strong>
@@ -502,8 +522,6 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
                 <span style="color:#94a3b8">—</span>
               <?php endif; ?>
             </td>
-
-            <!-- Sisa / Telat -->
             <td>
               <?php if ($status === 'dikembalikan'): ?>
                 <span style="color:#16a34a;font-size:12px;font-weight:600">✅ Kembali</span>
@@ -517,31 +535,25 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
                 <span class="badge badge-default">—</span>
               <?php endif; ?>
             </td>
-
-            <!-- Status -->
             <td>
               <?php
-                $bMap = [
+                $bMap = array(
                   'dipinjam'     => '<span class="badge badge-info">Dipinjam</span>',
                   'dikembalikan' => '<span class="badge badge-success">Dikembalikan</span>',
                   'terlambat'    => '<span class="badge badge-danger">⚠️ Terlambat</span>',
                   'menunggu'     => '<span class="badge badge-warning">Menunggu</span>',
-                ];
+                );
                 echo $bMap[$status] ?? '<span class="badge">' . htmlspecialchars($status) . '</span>';
               ?>
             </td>
-
-            <!-- Denda/Hari + estimasi (identik peminjaman.php) -->
             <td>
               <div class="denda-wrap">
                 <span class="denda-rate">Rp <?= number_format((float)($t['DendaPerHari'] ?? 0), 0, ',', '.') ?>/hari</span>
                 <?php if ($isTelat && $status !== 'dikembalikan' && $estimDenda > 0): ?>
-                  <span class="denda-est">Estimasi: Rp <?= number_format($estimDenda, 0, ',', '.') ?></span>
+                  <span class="denda-est">~Rp <?= number_format($estimDenda, 0, ',', '.') ?></span>
                 <?php endif; ?>
               </div>
             </td>
-
-            <!-- Total Denda (dari DB untuk yang sudah kembali; estimasi untuk yang masih aktif) -->
             <td>
               <?php if ($status === 'dikembalikan' && $adaDenda): ?>
                 <span class="denda-nominal">Rp <?= number_format($totalDenda, 0, ',', '.') ?></span>
@@ -553,8 +565,6 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
                 <span style="color:#d1d5db;font-size:12px">—</span>
               <?php endif; ?>
             </td>
-
-            <!-- Status Bayar Denda (identik peminjaman.php) -->
             <td>
               <?php if ($status !== 'dikembalikan'): ?>
                 <span class="badge-nodenda">— Belum kembali</span>
@@ -566,10 +576,22 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
                 <span class="badge-lunas">✅ Lunas</span>
               <?php endif; ?>
             </td>
+            <!-- Kolom Rating Buku -->
+            <td>
+              <?php if ($hasUlasan && $jmlUlasan > 0): ?>
+                <div class="rating-wrap">
+                  <span class="rating-stars-sm"><?php for($s=1;$s<=5;$s++) echo $s<=$rataRating?'⭐':'☆'; ?></span>
+                  <span class="rating-val-sm"><?= $rataRating ?>/5</span>
+                  <span class="rating-cnt-sm"><?= $jmlUlasan ?> ulasan</span>
+                </div>
+              <?php else: ?>
+                <span style="color:#d1d5db;font-size:12px">—</span>
+              <?php endif; ?>
+            </td>
           </tr>
           <?php endwhile; else: ?>
             <tr>
-              <td colspan="12">
+              <td colspan="13">
                 <div class="empty-state">
                   <div class="empty-icon">📭</div>
                   <p>Tidak ada data peminjaman<?= $cariQ ? ' untuk pencarian "'.htmlspecialchars($cariQ).'"' : '' ?>.</p>
@@ -585,7 +607,37 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
       </div>
     </div>
 
-    <!-- ══ DUA KOLOM: POPULER + KATEGORI ══ -->
+    <!-- ══ ULASAN TERBARU ══ -->
+    <?php if ($hasUlasan && $ulasanTerbaru && $ulasanTerbaru->num_rows > 0): ?>
+    <div class="section-title">⭐ Ulasan Terbaru dari Pembaca</div>
+    <div class="ulasan-grid">
+      <?php while ($ub = $ulasanTerbaru->fetch_assoc()):
+        $ubCover = !empty($ub['CoverURL']) ? $coverBaseURL . $ub['CoverURL'] : '';
+        $ubStars = '';
+        for ($s=1;$s<=5;$s++) $ubStars .= $s<=$ub['Rating']?'⭐':'☆';
+      ?>
+      <div class="ulasan-card">
+        <div class="uc-head">
+          <?php if ($ubCover): ?>
+            <img src="<?= htmlspecialchars($ubCover) ?>" class="uc-cover" alt=""
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="uc-cover-empty" style="display:none">📚</div>
+          <?php else: ?>
+            <div class="uc-cover-empty">📚</div>
+          <?php endif; ?>
+          <div class="uc-info">
+            <h5><?= htmlspecialchars($ub['Judul']) ?></h5>
+            <div class="uc-stars"><?= $ubStars ?></div>
+          </div>
+        </div>
+        <div class="uc-text">"<?= htmlspecialchars($ub['Ulasan']) ?>"</div>
+        <div class="uc-user">— <?= htmlspecialchars($ub['NamaLengkap']) ?> · <?= date('d M Y', strtotime($ub['CreatedAt'])) ?></div>
+      </div>
+      <?php endwhile; ?>
+    </div>
+    <?php endif; ?>
+
+    <!-- ══ DUA KOLOM: POPULER + RATING TERBAIK / KATEGORI ══ -->
     <div class="section-title">🏆 Statistik Buku & Kategori</div>
     <div class="two-col">
 
@@ -595,15 +647,11 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
         <?php if ($bukuPopuler && $bukuPopuler->num_rows > 0):
           $rank=1; while($r=$bukuPopuler->fetch_assoc()):
             $cUrl = !empty($r['CoverURL']) ? $coverBaseURL . $r['CoverURL'] : '';
+            $rr   = $r['RataRating'] ? round((float)$r['RataRating'],1) : 0;
         ?>
         <div class="populer-item">
           <div class="pop-rank">
-            <?php
-              if ($rank===1)     echo '🥇';
-              elseif ($rank===2) echo '🥈';
-              elseif ($rank===3) echo '🥉';
-              else               echo "#$rank";
-            ?>
+            <?php if ($rank===1) echo '🥇'; elseif ($rank===2) echo '🥈'; elseif ($rank===3) echo '🥉'; else echo "#$rank"; ?>
           </div>
           <?php if ($cUrl): ?>
             <img src="<?= htmlspecialchars($cUrl) ?>" class="pop-cover" alt=""
@@ -615,6 +663,9 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
           <div class="pop-info">
             <h5><?= htmlspecialchars($r['Judul']) ?></h5>
             <p><?= htmlspecialchars($r['Penulis'] ?? '-') ?></p>
+            <?php if ($hasUlasan && $rr > 0): ?>
+              <div class="pop-rating"><?php for($s=1;$s<=5;$s++) echo $s<=$rr?'⭐':'☆'; ?> <?= $rr ?> (<?= $r['JmlUlasan'] ?> ulasan)</div>
+            <?php endif; ?>
           </div>
           <div class="pop-count"><?= (int)$r['total'] ?>×</div>
         </div>
@@ -623,31 +674,78 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
         <?php endif; ?>
       </div>
 
-      <!-- Kategori Terpopuler -->
+      <!-- Rating Terbaik / Kategori -->
+      <?php if ($hasUlasan && $bukuRatingTerbaik && $bukuRatingTerbaik->num_rows > 0): ?>
+      <div class="chart-wrap">
+        <h4>⭐ Buku Rating Tertinggi</h4>
+        <?php $rank=1; while ($rbt = $bukuRatingTerbaik->fetch_assoc()):
+          $rbtCover = !empty($rbt['CoverURL']) ? $coverBaseURL . $rbt['CoverURL'] : '';
+        ?>
+        <div class="rating-top-item">
+          <div class="pop-rank"><?php if ($rank===1) echo '🥇'; elseif ($rank===2) echo '🥈'; elseif ($rank===3) echo '🥉'; else echo "#$rank"; $rank++; ?></div>
+          <?php if ($rbtCover): ?>
+            <img src="<?= htmlspecialchars($rbtCover) ?>" class="rta-cover" alt=""
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="rta-cover-empty" style="display:none">📚</div>
+          <?php else: ?>
+            <div class="rta-cover-empty">📚</div>
+          <?php endif; ?>
+          <div class="rta-info">
+            <h5><?= htmlspecialchars($rbt['Judul']) ?></h5>
+            <p><?= htmlspecialchars($rbt['Penulis'] ?? '-') ?></p>
+          </div>
+          <div class="rta-score">
+            <div class="val">⭐ <?= $rbt['RataRating'] ?></div>
+            <div class="cnt"><?= $rbt['JmlUlasan'] ?> ulasan</div>
+          </div>
+        </div>
+        <?php endwhile; ?>
+      </div>
+      <?php else: ?>
       <div class="chart-wrap">
         <h4>🏷️ Kategori Paling Diminati</h4>
         <?php
-        $maxKat = 1;
-        $katRows = [];
-        if ($kategoriPopuler) {
-            while ($k = $kategoriPopuler->fetch_assoc()) {
-                $katRows[] = $k;
-                if ((int)$k['total'] > $maxKat) $maxKat = (int)$k['total'];
-            }
+        $maxKat = 1; $katRows = array();
+        if ($kategoriPopuler) while ($k = $kategoriPopuler->fetch_assoc()) {
+            $katRows[] = $k; if ((int)$k['total'] > $maxKat) $maxKat = (int)$k['total'];
         }
         if (!empty($katRows)): foreach ($katRows as $k): ?>
         <div class="kat-bar-row">
           <div class="kat-bar-label" title="<?= htmlspecialchars($k['NamaKategori']) ?>"><?= htmlspecialchars($k['NamaKategori']) ?></div>
-          <div class="kat-bar-track">
-            <div class="kat-bar-fill" style="width:<?= round((int)$k['total'] / $maxKat * 100) ?>%"></div>
-          </div>
+          <div class="kat-bar-track"><div class="kat-bar-fill" style="width:<?= round((int)$k['total'] / $maxKat * 100) ?>%"></div></div>
           <div class="kat-bar-val"><?= (int)$k['total'] ?></div>
         </div>
         <?php endforeach; else: ?>
         <div style="text-align:center;padding:30px;color:#9ca3af;">Belum ada data.</div>
         <?php endif; ?>
       </div>
+      <?php endif; ?>
     </div>
+
+    <!-- ══ KATEGORI (jika ada rating) ══ -->
+    <?php if ($hasUlasan): ?>
+    <div class="section-title">🏷️ Statistik Kategori</div>
+    <div class="chart-wrap">
+      <h4>Kategori Paling Diminati</h4>
+      <?php
+      $maxKat = 1; $katRows = array();
+      if ($kategoriPopuler) {
+          $kategoriPopuler->data_seek(0);
+          while ($k = $kategoriPopuler->fetch_assoc()) {
+              $katRows[] = $k; if ((int)$k['total'] > $maxKat) $maxKat = (int)$k['total'];
+          }
+      }
+      if (!empty($katRows)): foreach ($katRows as $k): ?>
+      <div class="kat-bar-row">
+        <div class="kat-bar-label"><?= htmlspecialchars($k['NamaKategori']) ?></div>
+        <div class="kat-bar-track"><div class="kat-bar-fill" style="width:<?= round((int)$k['total'] / $maxKat * 100) ?>%"></div></div>
+        <div class="kat-bar-val"><?= (int)$k['total'] ?></div>
+      </div>
+      <?php endforeach; else: ?>
+      <div style="text-align:center;padding:24px;color:#9ca3af;">Belum ada data.</div>
+      <?php endif; ?>
+    </div>
+    <?php endif; ?>
 
     <!-- ══ ANGGOTA AKTIF ══ -->
     <div class="section-title">👥 Anggota Paling Aktif</div>
@@ -672,13 +770,13 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
       <?php endif; ?>
     </div>
 
-  </div><!-- /page-content -->
-</div><!-- /main -->
+  </div>
+</div>
 
 <?php if (!empty($chartLabels)): ?>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-const ctx = document.getElementById('chartBulan').getContext('2d');
+var ctx = document.getElementById('chartBulan').getContext('2d');
 new Chart(ctx, {
     type: 'bar',
     data: {
@@ -696,24 +794,10 @@ new Chart(ctx, {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            tooltip: {
-                callbacks: {
-                    label: ctx => ` ${ctx.parsed.y} peminjaman`
-                }
-            }
-        },
+        plugins: { legend: { display: false } },
         scales: {
-            y: {
-                beginAtZero: true,
-                ticks: { stepSize: 1, font: { family: 'DM Sans', size: 12 } },
-                grid: { color: '#f3f4f6' }
-            },
-            x: {
-                ticks: { font: { family: 'DM Sans', size: 12 } },
-                grid: { display: false }
-            }
+            y: { beginAtZero: true, ticks: { stepSize: 1, font: { family: 'DM Sans', size: 12 } }, grid: { color: '#f3f4f6' } },
+            x: { ticks: { font: { family: 'DM Sans', size: 12 } }, grid: { display: false } }
         }
     }
 });
