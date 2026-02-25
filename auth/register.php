@@ -5,36 +5,34 @@ require_once '../includes/auth.php';
 
 if (isLoggedIn()) { header('Location: /index.php'); exit; }
 
-// Kode akses rahasia per role
-define('KODE_PETUGAS', '12345');
-define('KODE_ADMIN',   '67890');
+// Kode akses rahasia — petugas tidak bisa daftar, hanya admin & peminjam
+define('KODE_ADMIN', '67890');
 
 $error = ''; $success = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nama       = trim($_POST['nama'] ?? '');
-    $username   = trim($_POST['username'] ?? '');
-    $email      = trim($_POST['email'] ?? '');
-    $alamat     = trim($_POST['alamat'] ?? '');
-    $password   = $_POST['password'] ?? '';
-    $konfirm    = $_POST['konfirm'] ?? '';
-    $role       = $_POST['role'] ?? '';
-    $kodeAkses  = trim($_POST['kode_akses'] ?? '');
+    $nama      = trim($_POST['nama']       ?? '');
+    $username  = trim($_POST['username']   ?? '');
+    $email     = trim($_POST['email']      ?? '');
+    $alamat    = trim($_POST['alamat']     ?? '');
+    $password  = $_POST['password']        ?? '';
+    $konfirm   = $_POST['konfirm']         ?? '';
+    $role      = $_POST['role']            ?? '';
+    $kodeAkses = trim($_POST['kode_akses'] ?? '');
 
-    $allowed_roles = ['administrator', 'petugas', 'peminjam'];
+    // Petugas TIDAK bisa mendaftar — hanya admin & peminjam
+    $allowed_roles = ['administrator', 'peminjam'];
 
     if (!in_array($role, $allowed_roles)) {
-        $error = 'Pilih peran yang valid!';
+        $error = 'Peran tidak valid. Akun Petugas hanya bisa login, tidak perlu mendaftar.';
     } elseif ($role === 'administrator' && $kodeAkses !== KODE_ADMIN) {
         $error = 'Kode akses Admin tidak valid!';
-    } elseif ($role === 'petugas' && $kodeAkses !== KODE_PETUGAS) {
-        $error = 'Kode akses Petugas tidak valid!';
     } elseif (strlen($password) < 6) {
         $error = 'Password minimal 6 karakter!';
     } elseif ($password !== $konfirm) {
         $error = 'Password dan konfirmasi tidak cocok!';
     } else {
         $conn = getConnection();
-        $cek = $conn->prepare("SELECT UserID FROM user WHERE Username=? OR Email=?");
+        $cek  = $conn->prepare("SELECT UserID FROM user WHERE Username=? OR Email=?");
         $cek->bind_param('ss', $username, $email);
         $cek->execute();
         if ($cek->get_result()->num_rows > 0) {
@@ -54,6 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $selectedRole = $_POST['role'] ?? 'peminjam';
+// Jaga-jaga: jangan pernah tampilkan petugas sebagai selected
+if ($selectedRole === 'petugas') $selectedRole = 'peminjam';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -63,41 +63,54 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../public/css/auth.css">
 <style>
-/* ── Role selector cards ─────────────────────────────────── */
-.role-selector{display:flex;gap:10px;margin-bottom:4px;}
-.role-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 8px;border:2px solid #e0ddf5;border-radius:12px;cursor:pointer;transition:all 0.2s;background:#fafafa;}
-.role-card:hover{border-color:#7c6fcd;background:#f3f0ff;}
-.role-card input[type="radio"]{display:none;}
-.role-card .role-icon{font-size:22px;}
-.role-card .role-label{font-size:12px;font-weight:600;color:#4a4a6a;}
-.role-card .role-desc{font-size:10px;color:#888;text-align:center;}
-.role-card.selected{border-color:#1a1a2e;background:#eee9ff;}
-.role-card.selected .role-label{color:#1a1a2e;}
-.alert-success strong{font-weight:700;}
+/* ── Role selector cards — horizontal pill style ─────────── */
+.role-selector { display:flex; gap:10px; margin-bottom:4px; }
+.role-card {
+    flex:1; display:flex; flex-direction:row; align-items:center;
+    justify-content:center; gap:9px; padding:13px 16px;
+    border:1.5px solid #e5e7eb; border-radius:14px; cursor:pointer;
+    transition:all 0.2s cubic-bezier(.34,1.56,.64,1);
+    background:#fff; user-select:none;
+}
+.role-card:hover { border-color:#a1a1aa; background:#fafafa; transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,0,0,.07); }
+.role-card input[type="radio"] { display:none; }
+.role-card .role-icon  { font-size:20px; flex-shrink:0; line-height:1; }
+.role-card .role-label { font-size:12px; font-weight:800; color:#6b7280; letter-spacing:.08em; text-transform:uppercase; }
+.role-card .role-desc  { display:none; } /* sembunyikan deskripsi, desain baru lebih compact */
+.role-card.selected {
+    border:2.5px solid #111827; background:#fff;
+    box-shadow:0 6px 20px rgba(17,24,39,.12);
+    transform:translateY(-1px);
+}
+.role-card.selected .role-label { color:#111827; }
+.alert-success strong { font-weight:700; }
+
+/* ── Info box petugas ────────────────────────────────────── */
+.petugas-info {
+    background:linear-gradient(135deg,#eff6ff,#dbeafe);
+    border:1.5px solid #93c5fd; border-radius:10px;
+    padding:12px 16px; font-size:13px; color:#1e40af;
+    margin-bottom:18px; display:flex; align-items:flex-start;
+    gap:10px; line-height:1.6;
+}
+.petugas-info strong { font-weight:700; }
+.petugas-info a      { color:#1e40af; font-weight:600; }
 
 /* ── Kode Akses field ────────────────────────────────────── */
-.kode-akses-wrap{
-    overflow:hidden;
-    max-height:0;
-    opacity:0;
+.kode-akses-wrap {
+    overflow:hidden; max-height:0; opacity:0;
     transition:max-height .35s ease, opacity .3s ease, margin .3s ease;
     margin-bottom:0;
 }
-.kode-akses-wrap.show{
-    max-height:120px;
-    opacity:1;
-    margin-bottom:0;
-}
-.kode-hint{
-    font-size:11px;color:#9ca3af;margin-top:5px;display:flex;align-items:center;gap:4px;
-}
-.kode-badge{
-    display:inline-flex;align-items:center;gap:5px;
+.kode-akses-wrap.show { max-height:120px; opacity:1; margin-bottom:0; }
+.kode-hint  { font-size:11px; color:#9ca3af; margin-top:5px; display:flex; align-items:center; gap:4px; }
+.kode-badge {
+    display:inline-flex; align-items:center; gap:5px;
     background:linear-gradient(135deg,#fef3c7,#fff7ed);
-    border:1.5px solid #fde68a;
-    border-radius:8px;padding:8px 14px;margin-bottom:10px;
-    font-size:12px;font-weight:600;color:#92400e;
-    width:100%;box-sizing:border-box;
+    border:1.5px solid #fde68a; border-radius:8px;
+    padding:8px 14px; margin-bottom:10px;
+    font-size:12px; font-weight:600; color:#92400e;
+    width:100%; box-sizing:border-box;
 }
 </style>
 </head>
@@ -122,49 +135,52 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
       <h2>Buat Akun Baru</h2>
       <p class="sub">Isi data diri Anda untuk mendaftar</p>
 
-      <?php if ($error): ?><div class="alert-error">⚠️ <?= htmlspecialchars($error) ?></div><?php endif; ?>
+      <?php if ($error):   ?><div class="alert-error">⚠️ <?= htmlspecialchars($error) ?></div><?php endif; ?>
       <?php if ($success): ?><div class="alert-success">✅ <?= $success ?></div><?php endif; ?>
+
+      <!-- Info: petugas tidak perlu daftar, langsung login -->
+      <div class="petugas-info">
+        <span style="font-size:18px;flex-shrink:0">ℹ️</span>
+        <span>
+          <strong>Akun Petugas</strong> tidak perlu didaftarkan di sini —
+          akun petugas sudah disiapkan oleh administrator sistem.
+          Jika Anda adalah petugas, silakan langsung
+          <a href="../auth/login.php">masuk ke sistem</a>.
+        </span>
+      </div>
 
       <?php if (!$success): ?>
       <form method="POST">
 
-        <!-- ROLE SELECTOR -->
+        <!-- ROLE SELECTOR — hanya 2 pilihan: Admin & Peminjam -->
         <div class="field-group">
           <label>Daftar sebagai</label>
           <div class="role-selector">
 
-            <label class="role-card <?= $selectedRole === 'administrator' ? 'selected' : '' ?>" onclick="selectRole(this)">
+            <label class="role-card <?= $selectedRole === 'administrator' ? 'selected' : '' ?>"
+                   onclick="selectRole(this)">
               <input type="radio" name="role" value="administrator"
                      <?= $selectedRole === 'administrator' ? 'checked' : '' ?> required>
               <span class="role-icon">🛡️</span>
               <span class="role-label">Admin</span>
-              <span class="role-desc">Kelola sistem &amp; pengguna</span>
             </label>
 
-            <label class="role-card <?= $selectedRole === 'petugas' ? 'selected' : '' ?>" onclick="selectRole(this)">
-              <input type="radio" name="role" value="petugas"
-                     <?= $selectedRole === 'petugas' ? 'checked' : '' ?>>
-              <span class="role-icon">👨‍💼</span>
-              <span class="role-label">Petugas</span>
-              <span class="role-desc">Proses peminjaman buku</span>
-            </label>
-
-            <label class="role-card <?= $selectedRole === 'peminjam' ? 'selected' : '' ?>" onclick="selectRole(this)">
+            <label class="role-card <?= $selectedRole !== 'administrator' ? 'selected' : '' ?>"
+                   onclick="selectRole(this)">
               <input type="radio" name="role" value="peminjam"
-                     <?= $selectedRole === 'peminjam' ? 'checked' : '' ?>>
+                     <?= $selectedRole !== 'administrator' ? 'checked' : '' ?>>
               <span class="role-icon">📖</span>
               <span class="role-label">Peminjam</span>
-              <span class="role-desc">Pinjam &amp; kembalikan buku</span>
             </label>
 
           </div>
         </div>
 
-        <!-- KODE AKSES (muncul hanya untuk admin & petugas) -->
-        <div class="kode-akses-wrap <?= in_array($selectedRole, ['administrator','petugas']) ? 'show' : '' ?>"
+        <!-- KODE AKSES — hanya muncul jika pilih Admin -->
+        <div class="kode-akses-wrap <?= $selectedRole === 'administrator' ? 'show' : '' ?>"
              id="kodeAksesWrap">
           <div class="kode-badge">
-            🔑 <span id="kodeAksesLabel">Masukkan kode akses khusus untuk melanjutkan</span>
+            🔑 <span id="kodeAksesLabel">Masukkan kode akses Admin untuk melanjutkan</span>
           </div>
           <div class="field-group" style="margin-bottom:0;">
             <label>Kode Akses</label>
@@ -172,8 +188,7 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
               <span class="input-icon">🔑</span>
               <input type="password" name="kode_akses" id="kodeAksesInput"
                      placeholder="Masukkan kode akses"
-                     autocomplete="off"
-                     value="">
+                     autocomplete="off" value="">
             </div>
             <div class="kode-hint">🔒 Kode ini diberikan oleh pengembang sistem</div>
           </div>
@@ -201,7 +216,8 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
 
         <div class="field-group">
           <label>Alamat</label>
-          <textarea name="alamat" rows="2" placeholder="Alamat lengkap..."><?= htmlspecialchars($_POST['alamat'] ?? '') ?></textarea>
+          <textarea name="alamat" rows="2"
+                    placeholder="Alamat lengkap..."><?= htmlspecialchars($_POST['alamat'] ?? '') ?></textarea>
         </div>
 
         <div class="field-row">
@@ -230,11 +246,6 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
 </div>
 
 <script>
-const labelMap = {
-    administrator: '🛡️ Masukkan kode akses Admin untuk melanjutkan',
-    petugas:       '👨‍💼 Masukkan kode akses Petugas untuk melanjutkan',
-};
-
 function selectRole(card) {
     document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
@@ -245,12 +256,10 @@ function selectRole(card) {
 
 function updateKodeAkses(role) {
     const wrap  = document.getElementById('kodeAksesWrap');
-    const label = document.getElementById('kodeAksesLabel');
     const input = document.getElementById('kodeAksesInput');
-
-    if (role === 'administrator' || role === 'petugas') {
+    // Kode akses hanya untuk Admin (petugas tidak ada di halaman ini)
+    if (role === 'administrator') {
         wrap.classList.add('show');
-        label.textContent = labelMap[role] ?? 'Masukkan kode akses';
         input.required = true;
     } else {
         wrap.classList.remove('show');
@@ -259,7 +268,6 @@ function updateKodeAkses(role) {
     }
 }
 
-// Init on page load
 document.addEventListener('DOMContentLoaded', () => {
     const checked = document.querySelector('.role-card input:checked');
     if (checked) {

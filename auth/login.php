@@ -64,15 +64,25 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../public/css/auth.css">
 <style>
-/* ── Role selector cards ─────────────────────────────────── */
+/* ── Role selector cards — horizontal pill style ─────────── */
 .role-selector{display:flex;gap:10px;margin-bottom:4px;}
-.role-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px 8px;border:2px solid #e0ddf5;border-radius:12px;cursor:pointer;transition:all 0.2s;background:#fafafa;}
-.role-card:hover{border-color:#7c6fcd;background:#f3f0ff;}
+.role-card{
+    flex:1;display:flex;flex-direction:row;align-items:center;justify-content:center;
+    gap:9px;padding:13px 16px;
+    border:1.5px solid #e5e7eb;border-radius:14px;cursor:pointer;
+    transition:all 0.2s cubic-bezier(.34,1.56,.64,1);
+    background:#fff;user-select:none;
+}
+.role-card:hover{border-color:#a1a1aa;background:#fafafa;transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.07);}
 .role-card input[type="radio"]{display:none;}
-.role-card .role-icon{font-size:22px;}
-.role-card .role-label{font-size:12px;font-weight:600;color:#4a4a6a;}
-.role-card.selected{border-color:#1a1a2e;background:#eee9ff;}
-.role-card.selected .role-label{color:#1a1a2e;}
+.role-card .role-icon{font-size:20px;flex-shrink:0;line-height:1;}
+.role-card .role-label{font-size:12px;font-weight:800;color:#6b7280;letter-spacing:.08em;text-transform:uppercase;}
+.role-card.selected{
+    border:2.5px solid #111827;background:#fff;
+    box-shadow:0 6px 20px rgba(17,24,39,.12);
+    transform:translateY(-1px);
+}
+.role-card.selected .role-label{color:#111827;}
 
 /* ── Kode Akses field ────────────────────────────────────── */
 .kode-akses-wrap{
@@ -142,7 +152,7 @@ $selectedRole = $_POST['role'] ?? 'peminjam';
             <label class="role-card <?= $selectedRole === 'petugas' ? 'selected' : '' ?>" onclick="selectRole(this)">
               <input type="radio" name="role" value="petugas"
                      <?= $selectedRole === 'petugas' ? 'checked' : '' ?>>
-              <span class="role-icon">👨‍💼</span>
+              <span class="role-icon">👤</span>
               <span class="role-label">Petugas</span>
             </label>
 
