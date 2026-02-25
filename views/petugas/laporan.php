@@ -472,6 +472,11 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
           </tbody>
         </table>
       </div>
+  <div style="margin-top:1.5rem;">
+                <button onclick="window.print()" class="btn btn-primary">
+                    <i class="fas fa-print"></i> Cetak Laporan
+                </button>
+            </div>
     </div>
 
   </div><!-- /page-content -->

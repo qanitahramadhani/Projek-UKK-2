@@ -769,8 +769,13 @@ tr.row-telat{background:linear-gradient(90deg,#fef2f2,#fff)!important;}
       <div style="text-align:center;padding:24px;color:#9ca3af;">Belum ada data anggota aktif.</div>
       <?php endif; ?>
     </div>
-
+<div style="margin-top:1.5rem;">
+                <button onclick="window.print()" class="btn btn-primary">
+                    <i class="fas fa-print"></i> Cetak Laporan
+                </button>
+            </div>
   </div>
+  
 </div>
 
 <?php if (!empty($chartLabels)): ?>
@@ -813,3 +818,4 @@ function toggleSidebar() {
 </body>
 </html>
 <?php $conn->close(); ?>
+
